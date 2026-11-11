@@ -15,3 +15,6 @@
   (участник 3), общие `docs/`.
 - 2026-11-12 — добавлены правила для агентов: `.agents`, `AGENTS.md`,
   `.github/instructions/agents-boundaries.instructions.md`.
+- 2026-11-12 — репозиторий приведён к составу участника 1: удалены
+  `backend/`, `frontend/`, `worker/`, `tests/`, `compose.yaml`,
+  `.dockerignore`; из `pyproject.toml` убраны веб-зависимости участника 2.

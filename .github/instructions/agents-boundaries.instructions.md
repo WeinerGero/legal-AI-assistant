@@ -9,12 +9,16 @@ applyTo: "**"
 
 ## Границы каталогов
 
+Активный участник ветки — **Участник 1**: только `core/` и `submission/`.
+Каталоги `backend/`, `frontend/`, `worker/`, `tests/` здесь отсутствуют —
+не создавать их и не править.
+
 - Участник 1: только `core/`, `submission/`.
 - Участник 2: только `backend/`, `frontend/`, `worker/`.
 - Участник 3: только `tests/`.
 - Общие файлы (`README.md`, `pyproject.toml`, `poetry.toml`,
-  `.gitignore`, `compose.yaml`, `docs/ARCHITECTURE.md`) — только по явной
-  команде пользователя.
+  `.gitignore`, `.env.example`, `CHANGELOG.md`, `docs/ARCHITECTURE.md`) —
+  только по явной команде пользователя.
 
 Никогда не редактировать файлы другого участника. Если правка нужна в чужом
 каталоге — остановиться и сформулировать задачу владельцу.

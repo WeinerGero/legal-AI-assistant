@@ -4,6 +4,10 @@
 
 ## Кто где работает
 
+Активный участник ветки — **Участник 1**: `core/`, `submission/`.
+Каталоги `backend/`, `frontend/`, `worker/`, `tests/` в этой ветке
+отсутствуют и не создаются.
+
 | Участник | Каталоги |
 | --- | --- |
 | Участник 1 | `core/`, `submission/` |
@@ -11,8 +15,8 @@
 | Участник 3 | `tests/` |
 
 Чужие каталоги не изменяются. Общие файлы (`README.md`, `pyproject.toml`,
-`poetry.toml`, `.gitignore`, `compose.yaml`, `docs/ARCHITECTURE.md`) —
-только по явной команде пользователя.
+`poetry.toml`, `.gitignore`, `.env.example`, `CHANGELOG.md`,
+`docs/ARCHITECTURE.md`) — только по явной команде пользователя.
 
 ## Зависимости
 
@@ -22,8 +26,8 @@
 
 ```bash
 poetry install              # установка окружения
-poetry run python -m compileall core backend frontend worker submission
-poetry run pytest tests     # прогон тестов
+poetry run python -m compileall core submission
+poetry run pytest           # прогон тестов
 ```
 
 ## Секреты

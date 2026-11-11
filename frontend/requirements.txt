@@ -1,3 +1,0 @@
-# Зависимости Streamlit-интерфейса (ARCHITECTURE.md §12).
-streamlit>=1.40
-requests>=2.32
