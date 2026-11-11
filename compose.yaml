@@ -1,0 +1,69 @@
+# Развёртывание веб-прототипа (ARCHITECTURE.md §16.1).
+# Секреты не включаются в репозиторий: значения берутся из .env.
+
+name: legal-ai-assistant
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-legal_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-legal_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-legal_ai} -d ${POSTGRES_DB:-legal_ai}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-legal_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-legal_ai}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      EMB_MODEL: ${EMB_MODEL:-BAAI/bge-m3}
+      RERANKER_MODEL: ${RERANKER_MODEL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      API_BASE_URL: http://api:8000/api/v1
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:8501:8501"
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "worker.main"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-legal_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-legal_ai}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

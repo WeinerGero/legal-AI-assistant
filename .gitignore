@@ -218,3 +218,101 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ============================================================
+# Проект: legal-AI-assistant
+# ============================================================
+
+# Секреты и локальные переменные окружения.
+# Отслеживается только образец .env.example.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials*
+*.secret
+.streamlit/secrets.toml
+
+# Игнор-файлы агентов не должны перезаписываться окружением
+!.agents
+!AGENTS.md
+
+# Конкурсные и рабочие данные (корпус, вопросы, выгрузки)
+data/
+data/**
+artifacts/
+submission.csv
+submission.zip
+questions.csv
+knowledge-base.zip
+*.zip
+!requirements*zip
+uploads/
+
+# Снимки поисковых индексов и модели
+indexes/
+indices/
+*.faiss
+*.bm25s
+*.pkl
+*.npy
+*.npz
+models/
+.cache/
+.cache/**
+hf_cache/
+huggingface/
+
+# Рабочие файлы Poetry / окружений
+.venv/
+.venv/**
+poetry.toml.bak
+poetry.lock.bak
+requirements.lock.bak
+
+# Временные и локальные файлы разработки
+*.tmp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+.tmp/
+temp/
+scratch/
+notebooks/
+*.ipynb
+
+# Логи и дампы без секретов
+logs/
+*.log
+dump.rdb
+pgdata/
+pg_dump*.sql
+*.dump
+
+# IDE и ОС
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Тестовые артефакты
+htmlcov/
+coverage.xml
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+test-results/
+report.html
