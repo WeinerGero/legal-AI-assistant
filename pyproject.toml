@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "legal-ai-assistant"
+version = "0.1.0"
+description = "Юридический ИИ-ассистент Банка СПБ (Hack&Change 2026)"
+authors = ["Участник 1"]
+readme = "README.md"
+packages = [
+    { include = "core" },
+    { include = "submission" },
+]
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.15"
+pydantic = "^2.9"
+httpx = "^0.27"
+numpy = "^1.26"
+bm25s = "^0.2"
+faiss-cpu = "^1.8"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+ruff = "^0.7"
+mypy = "^1.13"
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
+
+# ЗАМОРОЖЕННЫЕ ЗАВИСИМОСТИ (участник 1: core/ и submission/).
+# Списки в секциях [tool.poetry.dependencies] и
+# [tool.poetry.group.dev.dependencies] считаются замороженными
+# и не подлежат изменению без явной команды пользователя.
+# Агент не вправе удалять, понижать, повышать или переименовывать уже
+# добавленные зависимости. Новая зависимость добавляется только по явной
+# команде пользователя, с записью в CHANGELOG.md в разделе
+# "Изменения замороженного набора зависимостей".
+# Веб-зависимости (FastAPI, Streamlit, psycopg, argon2) добавляет участник 2
+# в pyproject.toml своей ветки.
+# Совместимость с регламентом конкурса ограничивает набор библиотек:
+# см. docs/ARCHITECTURE.md §0.4 (REG-03) и §13.5.
