@@ -17,7 +17,7 @@ from datetime import date, datetime
 from typing import Literal, Protocol, Sequence, runtime_checkable
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SCHEMA_VERSION = "1.0"
 
@@ -31,6 +31,7 @@ Intent = Literal[
     "out_of_scope",
 ]
 AnalysisStatus = Literal["ready", "needs_clarification", "out_of_scope"]
+RequestPurpose = Literal["legal_information", "prohibited_assistance", "nonlegal", "uncertain"]
 ValueOrigin = Literal["current_message", "dialog_context", "history", "inferred", "unknown"]
 ValueVerification = Literal["mentioned", "resolved", "verified_in_corpus", "unknown"]
 ClaimType = Literal["legal_fact", "legal_inference", "qualification", "non_factual"]
@@ -41,6 +42,20 @@ LegalStatus = Literal[
     "clarification_required",
     "insufficient_evidence",
     "out_of_scope",
+    "prohibited_assistance",
+]
+ApplicabilityStatus = Literal[
+    "found_applicable",
+    "found_conditional",
+    "not_confirmed",
+    "unknown_applicability",
+]
+MissingInformationKind = Literal[
+    "missing_fact",
+    "missing_document",
+    "missing_historical_version",
+    "unknown_user_parameter",
+    "unknown_applicability",
 ]
 VerificationState = Literal["supported", "partially_supported", "unsupported", "contradicted"]
 RequiredAction = Literal[
@@ -122,6 +137,7 @@ class AnalysisResultV1(BaseModel):
 
     schema_version: str = SCHEMA_VERSION
     status: AnalysisStatus = "ready"
+    request_purpose: RequestPurpose = "legal_information"
     intent: Intent = "contract_terms"
     standalone_question: str
     entities: dict[str, EntityValue] = Field(default_factory=dict)
@@ -177,15 +193,95 @@ class TemporalContext(BaseModel):
     applicability_unknown: bool = False
 
 
+class MetadataProvenance(BaseModel):
+    """Происхождение значения метаданных редакции (ARCHITECTURE.md §3.5)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field_name: str
+    source_version_id: UUID | None = None
+    source_start_char: int | None = None
+    source_end_char: int | None = None
+    extraction_method: str | None = None
+    review_status: Literal["verified", "pending", "conflict", "unknown"] = "unknown"
+
+
+class ApplicabilityDecisionV1(BaseModel):
+    """Результат трёхзначной проверки применимости редакции (§3.4, §3.5).
+
+    ``unknown`` никогда не считается выполненным условием: такая редакция
+    передаётся как альтернатива, а решение выносит модель №2.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    document_version_id: UUID
+    event_date: date | None = None
+    decision: Literal["true", "false", "unknown"] = "unknown"
+    reason_code: str
+    condition_source_ids: list[UUID] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    metadata_review_status: Literal["verified", "pending", "conflict", "unknown"] = "unknown"
+
+
+class FactAudit(BaseModel):
+    """Состояние одного запрошенного факта по итогам двух проходов поиска (§7.7)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fact_id: str
+    status: ApplicabilityStatus = "not_confirmed"
+    evidence_ids: list[str] = Field(default_factory=list)
+    searched_document_versions: list[UUID] = Field(default_factory=list)
+
+
+class RetrievalAuditV1(BaseModel):
+    """Аудит полноты поиска (ARCHITECTURE.md §7.7).
+
+    Два независимых прохода не являются доказательством отсутствия
+    положения в корпусе, поэтому результат аудита влияет на формулировки,
+    а не заменяет проверку.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = SCHEMA_VERSION
+    corpus_id: str
+    index_generation_id: UUID
+    passes: list[Literal["primary_hybrid", "independent_broad"]] = Field(
+        default_factory=list
+    )
+    requested_facts: list[FactAudit] = Field(default_factory=list)
+    expanded_search_completed: bool = False
+    unresolved_fact_ids: list[str] = Field(default_factory=list)
+
+
+class MandatoryPart(BaseModel):
+    """Обязательная часть полноты, выведенная детерминированно (§7.8)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    part_id: Literal[
+        "term_and_start_event",
+        "rule_and_exception",
+        "base_and_amendment",
+    ]
+    description: str
+    fact_ids: list[str] = Field(default_factory=list)
+
+
 class GenerationRequestV1(BaseModel):
     """Вход DeepSeek №2 (ARCHITECTURE.md §8.2)."""
 
     model_config = ConfigDict(extra="forbid")
 
     schema_version: str = SCHEMA_VERSION
+    request_purpose: RequestPurpose | None = None
     question: str
     requested_facts: list[str] = Field(default_factory=list)
     temporal_context: TemporalContext = Field(default_factory=TemporalContext)
+    retrieval_audit: RetrievalAuditV1 | None = None
+    mandatory_parts: list[MandatoryPart] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
 
 
@@ -206,6 +302,46 @@ class Block(BaseModel):
     segments: list[Segment] = Field(default_factory=list)
 
 
+class MissingInformationItem(BaseModel):
+    """Элемент ``missing_information`` (ARCHITECTURE.md §8.3)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fact_id: str | None = None
+    kind: MissingInformationKind = "missing_fact"
+    description: str
+    needed_to_answer: bool = True
+    search_passes_checked: int = 0
+
+
+class FalsePremise(BaseModel):
+    """Ложная посылка пользователя с опорой на доказательство (§8.3)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    premise: str
+    correction: str
+    evidence_ids: list[str] = Field(min_length=1)
+    claim_id: str = Field(pattern=r"^C\d{3,}$")
+
+
+def _coerce_missing_information(value: object) -> object:
+    """Принимает и строки, и структурные элементы: формат модели мог быть старым."""
+    if not isinstance(value, list):
+        return value
+    return [
+        item
+        if isinstance(item, dict) and "description" in item
+        else MissingInformationItem(
+            description=str(item),
+            kind="missing_fact",
+            needed_to_answer=True,
+            search_passes_checked=0,
+        )
+        for item in value
+    ]
+
+
 class GenerationResultV1(BaseModel):
     """Выход DeepSeek №2 (ARCHITECTURE.md §8.3)."""
 
@@ -214,8 +350,14 @@ class GenerationResultV1(BaseModel):
     schema_version: str = SCHEMA_VERSION
     legal_status: LegalStatus = "answered"
     blocks: list[Block] = Field(default_factory=list)
-    missing_information: list[str] = Field(default_factory=list)
+    missing_information: list[MissingInformationItem] = Field(default_factory=list)
+    false_premises: list[FalsePremise] = Field(default_factory=list)
     clarification_question: str | None = None
+
+    @field_validator("missing_information", mode="before")
+    @classmethod
+    def _accept_plain_strings(cls, value: object) -> object:
+        return _coerce_missing_information(value)
 
 
 class ClaimCheck(BaseModel):
