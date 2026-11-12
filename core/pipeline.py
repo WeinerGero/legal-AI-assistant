@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from uuid import UUID
 
+from core.analysis import analyze, build_request
 from core.contracts import (
-    AnalysisRequestV1,
     AnalysisResultV1,
     AnswerRepository,
     ChatMessage,
@@ -109,21 +109,35 @@ class LegalPipeline:
         conversation_id: UUID,
         current_message: str,
         current_date: date,
+        generation_id: UUID | None = None,
+        summary: str | None = None,
     ) -> AnalysisResultV1:
+        """Вызов DeepSeek №1 с проверками §6.4 и сверкой реквизитов с корпусом.
+
+        Сверка ``verified_in_corpus`` идёт только при известном поколении
+        индекса: без него реквизит остаётся ``mentioned`` и точный SQL-поиск
+        по нему не выполняется.
+        """
         context: DialogContext = self._adapters.contexts.load_context(conversation_id)
         recent: tuple[ChatMessage, ...] = tuple(
             self._adapters.contexts.load_recent_messages(
                 conversation_id, self._config.recent_messages
             )
         )
-        request = AnalysisRequestV1(
+        request = build_request(
             current_message=current_message,
-            dialog_context=context,
-            recent_messages=list(recent),
             current_date=current_date,
+            dialog_context=context,
+            recent_messages=recent,
+            summary=summary,
+            limit=self._config.recent_messages,
         )
-        payload = self._adapters.llm.complete_json("analysis_v1", request.model_dump_json())
-        return AnalysisResultV1.model_validate_json(payload)
+        return analyze(
+            llm=self._adapters.llm,
+            documents=self._adapters.documents,
+            generation_id=generation_id,
+            request=request,
+        )
 
     # --- Этапы 2–3: поиск и доказательства -----------------------------
 
