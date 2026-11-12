@@ -44,9 +44,14 @@ from core.contracts import (
     VerificationResultV1,
     VectorSearch,
 )
+from core.prompts import load_prompt
 from core.retrieval.evidence import build_evidence
 from core.retrieval.rerank import rerank_candidates
 from core.retrieval.search import HybridRetriever
+
+GENERATION_PROMPT_ID = "generation_v1"
+VERIFICATION_PROMPT_ID = "verification_v1"
+REPAIR_PROMPT_ID = "repair_v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,19 +189,28 @@ class LegalPipeline:
     # --- Этап 4: генерация --------------------------------------------
 
     def generate(self, request: GenerationRequestV1) -> GenerationResultV1:
-        payload = self._adapters.llm.complete_json("generation_v1", request.model_dump_json())
+        """Ответ DeepSeek №2: системный промпт передаётся дословно (§6.3, §8.2)."""
+        payload = self._adapters.llm.complete_json(
+            load_prompt(GENERATION_PROMPT_ID), request.model_dump_json()
+        )
         return GenerationResultV1.model_validate_json(payload)
 
     # --- Этап 5: проверка ---------------------------------------------
 
     def verify(self, request: VerificationRequestV1) -> VerificationResultV1:
-        payload = self._adapters.llm.complete_json("verification_v1", request.model_dump_json())
+        """Смысловая проверка DeepSeek №3 по полному ответу и основаниям (§9.2)."""
+        payload = self._adapters.llm.complete_json(
+            load_prompt(VERIFICATION_PROMPT_ID), request.model_dump_json()
+        )
         return VerificationResultV1.model_validate_json(payload)
 
     # --- Этапы 6–7: исправление и цитаты -------------------------------
 
     def repair(self, request: VerificationRequestV1) -> GenerationResultV1:
-        payload = self._adapters.llm.complete_json("repair_v1", request.model_dump_json())
+        """Единственная попытка исправления с последующей повторной проверкой (§9.4)."""
+        payload = self._adapters.llm.complete_json(
+            load_prompt(REPAIR_PROMPT_ID), request.model_dump_json()
+        )
         return GenerationResultV1.model_validate_json(payload)
 
     def run(
