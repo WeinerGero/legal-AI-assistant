@@ -15,6 +15,8 @@ from core.contracts import (
     Evidence,
     GenerationRequestV1,
     GenerationResultV1,
+    MandatoryPart,
+    RetrievalAuditV1,
     Segment,
     TemporalContext,
 )
@@ -28,15 +30,21 @@ def build_generation_request(
     *,
     event_date: date | None = None,
     applicability_unknown: bool = False,
+    request_purpose: str | None = None,
+    retrieval_audit: RetrievalAuditV1 | None = None,
+    mandatory_parts: list[MandatoryPart] | None = None,
 ) -> GenerationRequestV1:
     """Вход DeepSeek №2: самостоятельный вопрос и реестр доказательств."""
     return GenerationRequestV1(
+        request_purpose=request_purpose or analysis.request_purpose,
         question=analysis.standalone_question,
         requested_facts=analysis.requested_facts,
         temporal_context=TemporalContext(
             event_date=event_date,
             applicability_unknown=applicability_unknown,
         ),
+        retrieval_audit=retrieval_audit,
+        mandatory_parts=list(mandatory_parts or ()),
         evidence=evidence,
     )
 
