@@ -16,8 +16,10 @@ import numpy as np
 
 try:
     from submission.model_client import ModelClient
+    from submission.recording import ReplayMismatchError
 except ImportError:  # плоский корень submission.zip
     from model_client import ModelClient
+    from recording import ReplayMismatchError
 
 CLAUSE = re.compile(r"(?m)(?=^(?:статья|раздел|глава|пункт|п\.)?\s*\d+(?:\.\d+)*[.)]?\s+)", re.I)
 DATE = re.compile(r"\b\d{2}[./-]\d{2}[./-]\d{4}\b")
@@ -32,6 +34,9 @@ class Fragment:
     text: str
     dates: tuple[str, ...]
     relations: tuple[str, ...]
+    start_char: int | None = None
+    end_char: int | None = None
+    citation_section: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +76,7 @@ def load_fragments(path: Path, *, max_chars: int = 1800, overlap: int = 200) -> 
                                 text=part,
                                 dates=tuple(DATE.findall(part)),
                                 relations=tuple(match.group(1).lower() for match in RELATION.finditer(part)),
+                                citation_section=title,
                             )
                         )
                     if start + max_chars >= len(section):
@@ -94,6 +100,11 @@ class HybridIndex:
     def __init__(self, fragments: list[Fragment], client: ModelClient) -> None:
         self.fragments = fragments
         self.client = client
+        self._verified_citations = {
+            _citation_key(fragment)
+            for fragment in fragments
+            if fragment.citation_section
+        }
         self._build_lexical()
         corpus = [item.text for item in self.fragments]
         embeddings = np.asarray(client.embed(corpus), dtype="float32")
@@ -137,14 +148,17 @@ class HybridIndex:
                 for name in sorted(names - INDEX_MEMBERS)
                 if not name.endswith("/")
             }
+            document_texts = {
+                name: _normalized_document_text(archive.read(name))
+                for name in sorted(names - INDEX_MEMBERS)
+                if not name.endswith("/")
+            }
 
         fragments = _load_index_fragments(chunks_bytes)
         manifest = _load_manifest(manifest_bytes)
         instance = cls.__new__(cls)
-        instance.fragments = fragments
         instance.client = client
         instance.faiss = faiss.deserialize_index(np.frombuffer(index_bytes, dtype="uint8"))
-        instance._build_lexical()
         _validate_bundle(
             manifest=manifest,
             index=instance.faiss,
@@ -152,8 +166,12 @@ class HybridIndex:
             chunks_bytes=chunks_bytes,
             embedding_model=client.embedding_model,
             document_hashes=document_hashes,
+            document_texts=document_texts,
             expected_seed=client.seed,
         )
+        instance.fragments = _bind_citation_sections(fragments, document_texts)
+        instance._verified_citations = {_citation_key(item) for item in instance.fragments}
+        instance._build_lexical()
         return instance
 
     @classmethod
@@ -171,13 +189,11 @@ class HybridIndex:
         raw_chunks = chunks_path.read_bytes()
         fragments = _load_index_fragments(raw_chunks)
         manifest = _load_manifest(manifest_path.read_bytes())
-        document_hashes = _hash_archive_documents(knowledge_zip)
+        document_hashes, document_texts = _read_archive_documents(knowledge_zip)
 
         instance = cls.__new__(cls)
-        instance.fragments = fragments
         instance.client = client
         instance.faiss = faiss.read_index(str(index_path))
-        instance._build_lexical()
         _validate_bundle(
             manifest=manifest,
             index=instance.faiss,
@@ -185,9 +201,18 @@ class HybridIndex:
             chunks_bytes=raw_chunks,
             embedding_model=client.embedding_model,
             document_hashes=document_hashes,
+            document_texts=document_texts,
             expected_seed=client.seed,
         )
+        instance.fragments = _bind_citation_sections(fragments, document_texts)
+        instance._verified_citations = {_citation_key(item) for item in instance.fragments}
+        instance._build_lexical()
         return instance
+
+    def verified_citation_section(self, fragment: Fragment) -> str:
+        if _citation_key(fragment) not in self._verified_citations or not fragment.citation_section:
+            raise ValueError("пункт фрагмента не подтверждён исходным документом")
+        return fragment.citation_section
 
     def search(self, query: str, *, top_k: int = 30, final_k: int = 10) -> list[Fragment]:
         count = min(top_k, len(self.fragments))
@@ -247,9 +272,33 @@ class HybridIndex:
             reranked = self.client.rerank(
                 query, [self.fragments[i].text for i in candidates], final_k
             )
-        except Exception as exc:
-            self._record_rag("rerank", started, error=exc, candidates_count=len(candidates))
+        except ReplayMismatchError:
             raise
+        except Exception as exc:
+            fallback_indexes = list(range(min(final_k, len(candidates))))
+            result = [self.fragments[candidates[index]] for index in fallback_indexes]
+            self._record_rag(
+                "rerank",
+                started,
+                error=exc,
+                candidates_count=len(candidates),
+                selected_fragments_count=len(result),
+                unique_sources_count=len({fragment.source for fragment in result}),
+                fallback_used=True,
+            )
+            self.client.recording.checkpoint(
+                "rag.rerank",
+                [
+                    {
+                        "candidate_index": index,
+                        "source": self.fragments[candidates[index]].source,
+                        "section": self.fragments[candidates[index]].section,
+                        "fallback": True,
+                    }
+                    for index in fallback_indexes
+                ],
+            )
+            return result
         result: list[Fragment] = []
         seen: set[int] = set()
         for index, _score in reranked:
@@ -328,6 +377,8 @@ def _fragment_from_record(record: object) -> Fragment:
         text=text,
         dates=tuple(str(item) for item in record.get("dates", [])),
         relations=tuple(str(item) for item in record.get("relations", [])),
+        start_char=int(record["start_char"]) if record.get("start_char") is not None else None,
+        end_char=int(record["end_char"]) if record.get("end_char") is not None else None,
     )
 
 
@@ -339,6 +390,7 @@ def _validate_bundle(
     chunks_bytes: bytes,
     embedding_model: str,
     document_hashes: dict[str, DocumentHashes],
+    document_texts: dict[str, str],
     expected_seed: int,
 ) -> None:
     """Отклоняет индекс, который не соответствует текстам или ZIP корпуса."""
@@ -397,6 +449,8 @@ def _validate_bundle(
     if "" in referenced_documents or not referenced_documents <= set(document_hashes):
         unknown = sorted(referenced_documents - set(document_hashes))
         raise ValueError(f"chunks.json ссылается на неизвестные документы: {unknown}")
+    if set(document_texts) != set(document_hashes):
+        raise ValueError("набор текстов документов не совпадает с проверенными SHA-256")
 
 
 def _manifest_document_hashes(manifest: dict) -> dict[str, DocumentHashes]:
@@ -428,22 +482,89 @@ def _manifest_document_hashes(manifest: dict) -> dict[str, DocumentHashes]:
     return result
 
 
-def _hash_archive_documents(path: Path) -> dict[str, DocumentHashes]:
+def _read_archive_documents(
+    path: Path,
+) -> tuple[dict[str, DocumentHashes], dict[str, str]]:
     with zipfile.ZipFile(path) as archive:
         for name in archive.namelist():
             _validate_member_name(name)
-        return {
-            name: _document_hashes(archive.read(name))
+        raw_documents = {
+            name: archive.read(name)
             for name in sorted(archive.namelist())
             if not name.endswith("/")
         }
+    return (
+        {name: _document_hashes(raw) for name, raw in raw_documents.items()},
+        {name: _normalized_document_text(raw) for name, raw in raw_documents.items()},
+    )
 
 
 def _document_hashes(raw: bytes) -> DocumentHashes:
-    text = _decode(raw).replace("\r\n", "\n").replace("\r", "\n")
+    text = _normalized_document_text(raw)
     return DocumentHashes(
         raw_sha256=hashlib.sha256(raw).hexdigest(),
         text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    )
+
+
+def _normalized_document_text(raw: bytes) -> str:
+    return _decode(raw).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _bind_citation_sections(
+    fragments: list[Fragment], document_texts: dict[str, str]
+) -> list[Fragment]:
+    bound: list[Fragment] = []
+    for fragment in fragments:
+        document = document_texts[fragment.source]
+        if (
+            fragment.start_char is None
+            or fragment.end_char is None
+            or not 0 <= fragment.start_char < fragment.end_char <= len(document)
+            or document[fragment.start_char : fragment.end_char] != fragment.text
+        ):
+            raise ValueError(f"границы фрагмента не совпадают с документом: {fragment.source}")
+        section = _verified_section(fragment.section, fragment.text, document)
+        bound.append(
+            Fragment(
+                source=fragment.source,
+                section=fragment.section,
+                text=fragment.text,
+                dates=fragment.dates,
+                relations=fragment.relations,
+                start_char=fragment.start_char,
+                end_char=fragment.end_char,
+                citation_section=section,
+            )
+        )
+    return bound
+
+
+def _verified_section(section: str, fragment_text: str, document: str) -> str:
+    candidate = section.strip()
+    if candidate:
+        if candidate.isdigit() or re.fullmatch(r"\d+(?:\.\d+)+", candidate):
+            heading = re.compile(
+                rf"(?im)^(?:пункт|п\.|статья|ст\.|раздел|глава)?\s*"
+                rf"{re.escape(candidate)}(?=[.)\s])"
+            )
+            if heading.search(document):
+                return candidate
+        elif candidate in document:
+            return candidate
+    for line in fragment_text.splitlines():
+        exact_line = line.strip()
+        if exact_line and exact_line in document:
+            return exact_line[:160]
+    raise ValueError("для фрагмента не найден существующий пункт или точная строка")
+
+
+def _citation_key(fragment: Fragment) -> tuple[str, int | None, int | None, str | None]:
+    return (
+        fragment.source,
+        fragment.start_char,
+        fragment.end_char,
+        fragment.citation_section,
     )
 
 

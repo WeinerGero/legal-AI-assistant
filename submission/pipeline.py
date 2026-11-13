@@ -53,7 +53,7 @@ class SubmissionPipeline:
                 {
                     "evidence_id": f"E{number:03d}",
                     "document": item.source,
-                    "section": item.section,
+                    "section": self.index.verified_citation_section(item),
                     "dates": item.dates,
                     "relations": item.relations,
                     "text": item.text,
@@ -247,6 +247,8 @@ def _validate_generation(generation: dict, evidence: list[dict]) -> None:
     claims = generation.get("claims")
     if not isinstance(claims, list):
         raise ValueError("generation.claims должен быть массивом")
+    if not claims:
+        raise ValueError("публикация ответа без structured claims запрещена")
     known = {item["evidence_id"] for item in evidence}
     seen: set[str] = set()
     answer_ids = set(INLINE_EVIDENCE.findall(generation["answer"]))
@@ -275,6 +277,16 @@ def _validate_generation(generation: dict, evidence: list[dict]) -> None:
         missing_inline = set(evidence_ids) - answer_ids
         if missing_inline:
             raise ValueError(f"claim {claim_id} не связан с inline evidence: {sorted(missing_inline)}")
+    claim_ids = {
+        evidence_id
+        for claim in claims
+        for evidence_id in claim["evidence_ids"]
+    }
+    if answer_ids != claim_ids:
+        raise ValueError("набор ссылок answer не совпадает со structured claims")
+    raw_ids = set(re.findall(r"\bE\d{3,}\b", generation["answer"]))
+    if raw_ids != answer_ids:
+        raise ValueError("answer содержит E### вне формата [E###]")
 
 
 def _validate_verification(verification: dict, generation: dict, evidence: list[dict]) -> None:
@@ -331,6 +343,8 @@ def _render_citations(generation: dict, evidence: list[dict], *, target_language
     answer = generation["answer"].strip()
     for number, evidence_id in enumerate(ordered_ids, 1):
         answer = answer.replace(f"[{evidence_id}]", f"[{number}]")
+    if re.search(r"\bE\d{3,}\b", answer):
+        raise ValueError("не все evidence IDs преобразованы при публикации")
     if not ordered_ids:
         return answer
     source_title = "Источники" if target_language.lower().startswith("ru") else "Sources"

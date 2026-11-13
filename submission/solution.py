@@ -39,17 +39,17 @@ class RuntimeConfig:
     """Настройки из окружения (§13.5). Секреты не логируются."""
 
     data_dir: Path
-    top_k: int = 30
-    reranker_top_n: int = 10
+    top_k: int = 4
+    reranker_top_n: int = 2
     temperature: float = 0.0
-    max_tokens: int = 1_500
-    max_workers: int = 4
+    max_tokens: int = 1_024
+    max_workers: int = 2
     seed: int = DEFAULT_SEED
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
         return cls(
-            data_dir=Path(os.environ.get("DATA_DIR", ".")),
+            data_dir=Path(os.environ.get("DATA_DIR", "data")),
         )
 
 
@@ -73,7 +73,7 @@ def read_questions(path: Path) -> list[tuple[str, str]]:
 def write_submission(path: Path, rows: list[tuple[str, str]]) -> None:
     """Пишет ``submission.csv`` ровно с колонками ``id,answer``."""
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle)
+        writer = csv.writer(handle, quoting=csv.QUOTE_ALL, lineterminator="\n")
         writer.writerow(["id", "answer"])
         for question_id, answer in rows:
             normalized = answer.strip()
@@ -103,7 +103,12 @@ def main(argv: list[str] | None = None) -> int:
     metrics_value = os.environ.get("METRICS_PATH", "").strip()
     metrics = MetricsRecorder(Path(metrics_value)) if metrics_value else None
     questions_path = config.data_dir / "questions.csv"
-    knowledge_path = config.data_dir / "knowledge-base.zip"
+    knowledge_path = _find_data_file(
+        config.data_dir,
+        "kb.zip",
+        "knowledge-base.zip",
+        "knowledge_base.zip",
+    )
     output_path = Path(args[0]) if args else Path("submission.csv")
     module_dir = Path(__file__).resolve().parent
     bundled_index_dir = (
@@ -204,6 +209,15 @@ def _sha256_or_none(path: Path) -> str | None:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _find_data_file(data_dir: Path, *names: str) -> Path:
+    for root in (data_dir, Path(__file__).resolve().parent / data_dir, Path.cwd()):
+        for name in names:
+            path = root / name
+            if path.is_file():
+                return path
+    raise FileNotFoundError(f"не найден один из файлов: {', '.join(names)}")
 
 
 if __name__ == "__main__":

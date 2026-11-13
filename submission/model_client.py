@@ -56,20 +56,21 @@ class ModelClient:
         *,
         timeout: float = 90.0,
         seed: int = DEFAULT_SEED,
-        max_tokens: int = 1_500,
+        max_tokens: int = 1_024,
         metrics: Any | None = None,
         recording: APIRecordingStore | None = None,
     ) -> None:
         local = _load_local_settings()
         def get(name: str, default: str = "") -> str:
-            return os.getenv(name) or local.get(name, default)
+            value = (os.getenv(name) or local.get(name, "")).strip()
+            return default if not value or value == name else value
 
         local_key = get("LLM_DEV")
         common_base_url = get("BASE_URL")
         self.base_url = (
             get("LLM_BASE_URL")
-            or os.getenv("OPENAI_BASE_URL")
             or common_base_url
+            or os.getenv("OPENAI_BASE_URL")
             or ("https://matreshkaapi.mooo.com/v1" if local_key else "")
         ).rstrip("/")
         self.api_key = get("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or local_key
@@ -83,12 +84,12 @@ class ModelClient:
         self.reranker_api_key = get("RERANKER_API_KEY") or self.api_key
         self.llm_model = (
             get("LLM_MODEL")
-            or os.getenv("OPENAI_MODEL")
             or os.getenv("GEN_MODEL")
-            or ("deepseek-v4.1-flash" if local_key else "")
+            or os.getenv("OPENAI_MODEL")
+            or ("deepseek-v4.1-flash" if local_key else "deepseek/deepseek-v4.1-flash")
         )
-        self.embedding_model = get("EMB_MODEL", "BAAI/bge-m3")
-        self.reranker_model = get("RERANKER_MODEL")
+        self.embedding_model = get("EMB_MODEL", "baai/bge-m3")
+        self.reranker_model = get("RERANKER_MODEL", "cohere/rerank-5-fast")
         self.timeout = timeout
         self.seed = seed
         self.max_tokens = max_tokens
@@ -198,7 +199,11 @@ class ModelClient:
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         data = self._request(
             "embeddings",
-            {"model": self.embedding_model, "input": list(texts)},
+            {
+                "model": self.embedding_model,
+                "input": list(texts),
+                "encoding_format": "float",
+            },
             base_url=self.embedding_base_url,
             api_key=self.embedding_api_key,
             service="embedder",
