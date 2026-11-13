@@ -1,24 +1,402 @@
 {
-  "schema_version": "1.0",
-  "provenance": "Manual closed-corpus labels verified against tracked chunks; demo_output is evaluated as a candidate, not used as hidden truth.",
+  "schema_version": "2.0",
+  "provenance": "Manual closed-corpus labels with exact source IDs and fact-to-section bindings verified against tracked chunks; demo_output remains only a candidate example.",
   "questions": [
-    {"id":"1","documents":["Договор аренды А-08-2024"],"sections":["3.1","3.2"],"facts":["450 000","5-го числа"],"outcome":"success","history":false},
-    {"id":"2","documents":["ТК_ст70"],"sections":["Статья 70"],"facts":["шести месяцев"],"outcome":"success","history":false},
-    {"id":"3","documents":[],"sections":[],"facts":[],"outcome":"legal_refusal","history":false,"ambiguous":false},
-    {"id":"4","documents":["Договор аренды А-08-2024"],"sections":["3.1","3.4"],"facts":["450 000","7%"],"outcome":"success","history":false},
-    {"id":"5","documents":["Регламент согласования договоров ред 2023"],"sections":["2.4"],"facts":["10 000 000","10.01.2023"],"outcome":"success","history":false,"date_sensitive":true},
-    {"id":"6","documents":["Договор поставки П-17-2024"],"sections":["6.1","3.3"],"facts":["рабочих дней","УПД"],"outcome":"success","history":true},
-    {"id":"7","documents":["Договор аренды А-08-2024"],"sections":["4.3"],"facts":["беспрепятствен","доступ"],"outcome":"success","history":false},
-    {"id":"8","documents":["Договор поставки П-17-2024"],"sections":["6.2"],"facts":["акт","недостатк"],"outcome":"success","history":false},
-    {"id":"9","documents":["Договор поставки ПТ-05-2023"],"sections":["4.1","4.2"],"facts":["календарных дней","предоплат"],"outcome":"success","history":false},
-    {"id":"10","documents":["Регламент согласования договоров ред 2025"],"sections":["1.3"],"facts":["руководитель подразделения"],"outcome":"success","history":false},
-    {"id":"11","documents":["Служебная записка об архиве договоров"],"sections":[],"facts":["рабочих дней","СЭД"],"outcome":"success","history":false},
-    {"id":"12","documents":["ТК_ст70"],"sections":["Статья 70"],"facts":["трудового законодательства","локальных нормативных актов"],"outcome":"success","history":false},
-    {"id":"13","documents":["152ФЗ_ст9"],"sections":["Статья 9","2."],"facts":["субъект персональных данных","без согласия"],"outcome":"success","history":false,"ambiguous":true},
-    {"id":"14","documents":["ТК_ст59"],"sections":["Статья 59"],"facts":["сезонных работ","срочный трудовой договор"],"outcome":"success","history":false},
-    {"id":"15","documents":["Договор аренды А-08-2024"],"sections":["6.3"],"facts":["по акту","нормального износа"],"outcome":"success","history":true},
-    {"id":"16","documents":["Договор поставки П-17-2024"],"sections":["2.1"],"facts":["упаковк","доставк"],"outcome":"success","history":true},
-    {"id":"17","documents":["Договор поставки ПТ-05-2023"],"sections":["6.1"],"facts":["производител","гарантийн"],"outcome":"success","history":true,"ambiguous":true},
-    {"id":"18","documents":["Регламент согласования договоров ред 2025"],"sections":["3.2"],"facts":["рабочих дней","юридический отдел"],"outcome":"success","history":true}
+    {
+      "id": "1",
+      "documents": [
+        "документы компании__Договор аренды А-08-2024 Северный Склад.txt"
+      ],
+      "sections": [
+        "3.1",
+        "3.2"
+      ],
+      "facts": [
+        {
+          "text": "450 000",
+          "document": "документы компании__Договор аренды А-08-2024 Северный Склад.txt",
+          "section": "3.1"
+        },
+        {
+          "text": "5-го числа",
+          "document": "документы компании__Договор аренды А-08-2024 Северный Склад.txt",
+          "section": "3.2"
+        }
+      ],
+      "outcome": "success",
+      "history": false
+    },
+    {
+      "id": "2",
+      "documents": [
+        "законы__ТК_ст70_действующая.txt"
+      ],
+      "sections": [
+        "Статья 70"
+      ],
+      "facts": [
+        {
+          "text": "шести месяцев",
+          "document": "законы__ТК_ст70_действующая.txt",
+          "section": "Статья 70"
+        }
+      ],
+      "outcome": "success",
+      "history": false
+    },
+    {
+      "id": "3",
+      "documents": [],
+      "sections": [],
+      "facts": [],
+      "outcome": "legal_refusal",
+      "history": false,
+      "ambiguous": false
+    },
+    {
+      "id": "4",
+      "documents": [
+        "документы компании__Договор аренды А-08-2024 Северный Склад.txt"
+      ],
+      "sections": [
+        "3.1",
+        "3.4"
+      ],
+      "facts": [
+        {
+          "text": "450 000",
+          "document": "документы компании__Договор аренды А-08-2024 Северный Склад.txt",
+          "section": "3.1"
+        },
+        {
+          "text": "7%",
+          "document": "документы компании__Договор аренды А-08-2024 Северный Склад.txt",
+          "section": "3.4"
+        }
+      ],
+      "outcome": "success",
+      "history": false
+    },
+    {
+      "id": "5",
+      "documents": [
+        "документы компании__Регламент согласования договоров ред 2023 (утратил силу).txt"
+      ],
+      "sections": [
+        "2.4"
+      ],
+      "facts": [
+        {
+          "text": "10 000 000",
+          "document": "документы компании__Регламент согласования договоров ред 2023 (утратил силу).txt",
+          "section": "2.4"
+        },
+        {
+          "text": "10.01.2023",
+          "document": "документы компании__Регламент согласования договоров ред 2023 (утратил силу).txt",
+          "section": ""
+        }
+      ],
+      "outcome": "success",
+      "history": false,
+      "date_sensitive": true
+    },
+    {
+      "id": "6",
+      "documents": [
+        "документы компании__Договор поставки П-17-2024 Альфа-Трейд.txt"
+      ],
+      "sections": [
+        "6.1",
+        "3.3"
+      ],
+      "facts": [
+        {
+          "text": "рабочих дней",
+          "document": "документы компании__Договор поставки П-17-2024 Альфа-Трейд.txt",
+          "section": "6.1"
+        },
+        {
+          "text": "УПД",
+          "document": "документы компании__Договор поставки П-17-2024 Альфа-Трейд.txt",
+          "section": "3.3"
+        }
+      ],
+      "outcome": "success",
+      "history": true
+    },
+    {
+      "id": "7",
+      "documents": [
+        "документы компании__Договор аренды А-08-2024 Северный Склад.txt"
+      ],
+      "sections": [
+        "4.3"
+      ],
+      "facts": [
+        {
+          "text": "беспрепятствен",
+          "document": "документы компании__Договор аренды А-08-2024 Северный Склад.txt",
+          "section": "4.3"
+        },
+        {
+          "text": "доступ",
+          "document": "документы компании__Договор аренды А-08-2024 Северный Склад.txt",
+          "section": "4.3"
+        }
+      ],
+      "outcome": "success",
+      "history": false
+    },
+    {
+      "id": "8",
+      "documents": [
+        "документы компании__Договор поставки П-17-2024 Альфа-Трейд.txt"
+      ],
+      "sections": [
+        "6.2"
+      ],
+      "facts": [
+        {
+          "text": "акт",
+          "document": "документы компании__Договор поставки П-17-2024 Альфа-Трейд.txt",
+          "section": "6.2"
+        },
+        {
+          "text": "недостатк",
+          "document": "документы компании__Договор поставки П-17-2024 Альфа-Трейд.txt",
+          "section": "6.2"
+        }
+      ],
+      "outcome": "success",
+      "history": false
+    },
+    {
+      "id": "9",
+      "documents": [
+        "документы компании__Договор поставки ПТ-05-2023 Альфа-Трейдинг.txt"
+      ],
+      "sections": [
+        "4.1",
+        "4.2"
+      ],
+      "facts": [
+        {
+          "text": "календарных дней",
+          "document": "документы компании__Договор поставки ПТ-05-2023 Альфа-Трейдинг.txt",
+          "section": "4.1"
+        },
+        {
+          "text": "предоплат",
+          "document": "документы компании__Договор поставки ПТ-05-2023 Альфа-Трейдинг.txt",
+          "section": "4.2"
+        }
+      ],
+      "outcome": "success",
+      "history": false
+    },
+    {
+      "id": "10",
+      "documents": [
+        "документы компании__Регламент согласования договоров ред 2025.txt"
+      ],
+      "sections": [
+        "1.3"
+      ],
+      "facts": [
+        {
+          "text": "руководитель подразделения",
+          "document": "документы компании__Регламент согласования договоров ред 2025.txt",
+          "section": "1.3"
+        }
+      ],
+      "outcome": "success",
+      "history": false
+    },
+    {
+      "id": "11",
+      "documents": [
+        "документы компании__Служебная записка об архиве договоров.txt"
+      ],
+      "sections": [],
+      "facts": [
+        {
+          "text": "рабочих дней",
+          "document": "документы компании__Служебная записка об архиве договоров.txt",
+          "section": ""
+        },
+        {
+          "text": "СЭД",
+          "document": "документы компании__Служебная записка об архиве договоров.txt",
+          "section": ""
+        }
+      ],
+      "outcome": "success",
+      "history": false
+    },
+    {
+      "id": "12",
+      "documents": [
+        "законы__ТК_ст70_действующая.txt"
+      ],
+      "sections": [
+        "Статья 70"
+      ],
+      "facts": [
+        {
+          "text": "трудового законодательства",
+          "document": "законы__ТК_ст70_действующая.txt",
+          "section": "Статья 70"
+        },
+        {
+          "text": "локальных нормативных актов",
+          "document": "законы__ТК_ст70_действующая.txt",
+          "section": "Статья 70"
+        }
+      ],
+      "outcome": "success",
+      "history": false
+    },
+    {
+      "id": "13",
+      "documents": [
+        "законы__152ФЗ_ст9_действующая.txt"
+      ],
+      "sections": [
+        "Статья 9",
+        "2."
+      ],
+      "facts": [
+        {
+          "text": "субъект персональных данных",
+          "document": "законы__152ФЗ_ст9_действующая.txt",
+          "section": "1"
+        },
+        {
+          "text": "без согласия",
+          "document": "законы__152ФЗ_ст9_действующая.txt",
+          "section": "2"
+        }
+      ],
+      "outcome": "success",
+      "history": false,
+      "ambiguous": true
+    },
+    {
+      "id": "14",
+      "documents": [
+        "законы__ТК_ст59_действующая.txt"
+      ],
+      "sections": [
+        "Статья 59"
+      ],
+      "facts": [
+        {
+          "text": "сезонных работ",
+          "document": "законы__ТК_ст59_действующая.txt",
+          "section": "Статья 59"
+        },
+        {
+          "text": "срочный трудовой договор",
+          "document": "законы__ТК_ст59_действующая.txt",
+          "section": "Статья 59"
+        }
+      ],
+      "outcome": "success",
+      "history": false
+    },
+    {
+      "id": "15",
+      "documents": [
+        "документы компании__Договор аренды А-08-2024 Северный Склад.txt"
+      ],
+      "sections": [
+        "6.3"
+      ],
+      "facts": [
+        {
+          "text": "по акту",
+          "document": "документы компании__Договор аренды А-08-2024 Северный Склад.txt",
+          "section": "6.3"
+        },
+        {
+          "text": "нормального износа",
+          "document": "документы компании__Договор аренды А-08-2024 Северный Склад.txt",
+          "section": "6.3"
+        }
+      ],
+      "outcome": "success",
+      "history": true
+    },
+    {
+      "id": "16",
+      "documents": [
+        "документы компании__Договор поставки П-17-2024 Альфа-Трейд.txt"
+      ],
+      "sections": [
+        "2.1"
+      ],
+      "facts": [
+        {
+          "text": "упаковк",
+          "document": "документы компании__Договор поставки П-17-2024 Альфа-Трейд.txt",
+          "section": "2.1"
+        },
+        {
+          "text": "доставк",
+          "document": "документы компании__Договор поставки П-17-2024 Альфа-Трейд.txt",
+          "section": "2.1"
+        }
+      ],
+      "outcome": "success",
+      "history": true
+    },
+    {
+      "id": "17",
+      "documents": [
+        "документы компании__Договор поставки ПТ-05-2023 Альфа-Трейдинг.txt"
+      ],
+      "sections": [
+        "6.1"
+      ],
+      "facts": [
+        {
+          "text": "производител",
+          "document": "документы компании__Договор поставки ПТ-05-2023 Альфа-Трейдинг.txt",
+          "section": "6.1"
+        },
+        {
+          "text": "гарантийн",
+          "document": "документы компании__Договор поставки ПТ-05-2023 Альфа-Трейдинг.txt",
+          "section": "6.1"
+        }
+      ],
+      "outcome": "success",
+      "history": true,
+      "ambiguous": true
+    },
+    {
+      "id": "18",
+      "documents": [
+        "документы компании__Регламент согласования договоров ред 2025.txt"
+      ],
+      "sections": [
+        "3.2"
+      ],
+      "facts": [
+        {
+          "text": "рабочих дней",
+          "document": "документы компании__Регламент согласования договоров ред 2025.txt",
+          "section": "3.2"
+        },
+        {
+          "text": "юридический отдел",
+          "document": "документы компании__Регламент согласования договоров ред 2025.txt",
+          "section": "3.2"
+        }
+      ],
+      "outcome": "success",
+      "history": true
+    }
   ]
 }

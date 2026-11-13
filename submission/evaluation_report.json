@@ -4,726 +4,1253 @@
     "documents": 21,
     "chunks": 1034,
     "demo_output_role": "candidate example answers, not hidden golden",
+    "predictions": null,
     "label_issues": [],
+    "methodology_checks": {
+      "fact_labels_resolve_to_exact_provisions": true,
+      "same_section_in_other_document_is_rejected": true,
+      "overlapping_chunks_do_not_inflate_ndcg": true,
+      "historical_revision_uses_exact_2023_source": true,
+      "dialogue_questions_are_isolated_and_labeled": true
+    },
     "ambiguous_question_ids": [
       "13",
       "17"
     ]
   },
   "summary": {
-    "bm25_document": {
-      "recall@8": 1.0,
-      "mrr@8": 0.80203081232493,
-      "ndcg@8": 0.8465798943800956
+    "retrieval": {
+      "query_source": "original",
+      "local_bm25_document": {
+        "question_denominator": 17,
+        "label_denominator": 17,
+        "aggregation": "macro average over labeled questions",
+        "@8": {
+          "recall": 1.0,
+          "mrr": 0.80203081232493,
+          "ndcg": 0.8465798943800956
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.80203081232493,
+          "ndcg": 0.8465798943800956
+        }
+      },
+      "local_bm25_section": {
+        "question_denominator": 16,
+        "label_denominator": 21,
+        "aggregation": "macro average over labeled questions",
+        "@8": {
+          "recall": 0.5625,
+          "mrr": 0.4174107142857143,
+          "ndcg": 0.4166342646141134
+        },
+        "@24": {
+          "recall": 0.78125,
+          "mrr": 0.43116544913419913,
+          "ndcg": 0.475681641372779
+        }
+      },
+      "analysis_query_rankings": {
+        "available": false,
+        "reason": "N/A: no recorded Analysis queries under matched conditions"
+      }
     },
-    "bm25_document_denominator": 17,
-    "bm25_section": {
-      "recall@8": 0.5625,
-      "mrr@8": 0.3757440476190476,
-      "ndcg@8": 0.39747341484019283
+    "official_demo_output_observation": {
+      "role": "candidate answer observation, not model quality or hidden-golden score",
+      "required_fact_recall": {
+        "value": 1.0,
+        "numerator": 32,
+        "denominator": 32
+      },
+      "citation_document_coverage": {
+        "value": 1.0,
+        "numerator": 17,
+        "denominator": 17
+      },
+      "citation_section_coverage": {
+        "value": 0.8095238095238095,
+        "numerator": 17,
+        "denominator": 21
+      },
+      "false_refusal_rate": {
+        "value": 0.0,
+        "numerator": 0,
+        "denominator": 17
+      },
+      "missed_refusal_rate": {
+        "value": 0.0,
+        "numerator": 0,
+        "denominator": 1
+      },
+      "outcomes": {
+        "success": 17,
+        "legal_refusal": 1,
+        "technical_refusal": 0
+      }
     },
-    "bm25_section_denominator": 16,
-    "demo_required_fact_recall": {
-      "value": 1.0,
-      "numerator": 32,
-      "denominator": 32
-    },
-    "demo_citation_document_coverage": {
-      "value": 1.0,
-      "numerator": 17,
-      "denominator": 17
-    },
-    "demo_citation_section_coverage": {
-      "value": 0.8095238095238095,
-      "numerator": 17,
-      "denominator": 21
-    },
-    "demo_false_refusal_rate": {
-      "value": 0.0,
-      "numerator": 0,
-      "denominator": 17
-    },
-    "demo_missed_refusal_rate": {
-      "value": 0.0,
-      "numerator": 0,
-      "denominator": 1
-    },
-    "demo_outcomes": {
-      "success": 17,
-      "legal_refusal": 1,
-      "technical_refusal": 0
-    },
-    "history_subset_required_fact_recall": {
-      "value": 1.0,
-      "numerator": 10,
-      "denominator": 10
+    "solution_predictions": {
+      "available": false,
+      "reason": "N/A: --predictions was not supplied or the file does not exist",
+      "generation_quality": null,
+      "final_answer_quality": null
     }
   },
   "comparison": [
     {
-      "metric": "bm25_document.recall@8",
+      "metric": "local_bm25.document.recall@8",
       "value": 1.0,
       "denominator": 17,
       "before": null,
       "after": 1.0,
       "change": null,
-      "comparison_reason": "N/A: no previous run under identical API replay"
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
     },
     {
-      "metric": "bm25_document.mrr@8",
+      "metric": "local_bm25.document.mrr@8",
       "value": 0.80203081232493,
       "denominator": 17,
       "before": null,
       "after": 0.80203081232493,
       "change": null,
-      "comparison_reason": "N/A: no previous run under identical API replay"
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
     },
     {
-      "metric": "bm25_document.ndcg@8",
+      "metric": "local_bm25.document.ndcg@8",
       "value": 0.8465798943800956,
       "denominator": 17,
       "before": null,
       "after": 0.8465798943800956,
       "change": null,
-      "comparison_reason": "N/A: no previous run under identical API replay"
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
     },
     {
-      "metric": "bm25_section.recall@8",
-      "value": 0.5625,
-      "denominator": 16,
-      "before": null,
-      "after": 0.5625,
-      "change": null,
-      "comparison_reason": "N/A: no previous run under identical API replay"
-    },
-    {
-      "metric": "demo.required_fact_recall",
-      "value": 1.0,
-      "denominator": 32,
-      "before": null,
-      "after": 1.0,
-      "change": null,
-      "comparison_reason": "N/A: no previous run under identical API replay"
-    },
-    {
-      "metric": "demo.citation_document_coverage",
+      "metric": "local_bm25.document.recall@24",
       "value": 1.0,
       "denominator": 17,
       "before": null,
       "after": 1.0,
       "change": null,
-      "comparison_reason": "N/A: no previous run under identical API replay"
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
     },
     {
-      "metric": "demo.citation_section_coverage",
-      "value": 0.8095238095238095,
-      "denominator": 21,
+      "metric": "local_bm25.document.mrr@24",
+      "value": 0.80203081232493,
+      "denominator": 17,
       "before": null,
-      "after": 0.8095238095238095,
+      "after": 0.80203081232493,
       "change": null,
-      "comparison_reason": "N/A: no previous run under identical API replay"
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
+    },
+    {
+      "metric": "local_bm25.document.ndcg@24",
+      "value": 0.8465798943800956,
+      "denominator": 17,
+      "before": null,
+      "after": 0.8465798943800956,
+      "change": null,
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
+    },
+    {
+      "metric": "local_bm25.section.recall@8",
+      "value": 0.5625,
+      "denominator": 16,
+      "before": null,
+      "after": 0.5625,
+      "change": null,
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
+    },
+    {
+      "metric": "local_bm25.section.mrr@8",
+      "value": 0.4174107142857143,
+      "denominator": 16,
+      "before": null,
+      "after": 0.4174107142857143,
+      "change": null,
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
+    },
+    {
+      "metric": "local_bm25.section.ndcg@8",
+      "value": 0.4166342646141134,
+      "denominator": 16,
+      "before": null,
+      "after": 0.4166342646141134,
+      "change": null,
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
+    },
+    {
+      "metric": "local_bm25.section.recall@24",
+      "value": 0.78125,
+      "denominator": 16,
+      "before": null,
+      "after": 0.78125,
+      "change": null,
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
+    },
+    {
+      "metric": "local_bm25.section.mrr@24",
+      "value": 0.43116544913419913,
+      "denominator": 16,
+      "before": null,
+      "after": 0.43116544913419913,
+      "change": null,
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
+    },
+    {
+      "metric": "local_bm25.section.ndcg@24",
+      "value": 0.475681641372779,
+      "denominator": 16,
+      "before": null,
+      "after": 0.475681641372779,
+      "change": null,
+      "comparison_reason": "N/A: historical v1 used substring labels and a different methodology"
     }
   ],
+  "historical_v1": {
+    "methodology": "v1 substring source matching and top-8 only; historical, not comparable",
+    "bm25_document_question_denominator": 17,
+    "bm25_document_recall@8": 1.0,
+    "bm25_document_mrr@8": 0.80203081232493,
+    "bm25_document_ndcg@8": 0.8465798943800956,
+    "bm25_section_recall@8": 0.5625,
+    "bm25_section_mrr@8": 0.3757440476190476,
+    "bm25_section_ndcg@8": 0.39747341484019283,
+    "bm25_section_question_denominator": 16,
+    "demo_required_facts": {
+      "numerator": 32,
+      "denominator": 32
+    },
+    "demo_document_citations": {
+      "numerator": 17,
+      "denominator": 17
+    },
+    "demo_section_citations": {
+      "numerator": 17,
+      "denominator": 21
+    },
+    "demo_outcomes": {
+      "success": 17,
+      "legal_refusal": 1,
+      "technical_refusal": 0
+    }
+  },
   "questions": [
     {
       "id": "1",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 0.9197207891481876
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 0.9197207891481876,
+          "cutoff": 8,
+          "relevant_labels": 2
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 0.9197207891481876,
+          "cutoff": 24,
+          "relevant_labels": 2
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "2",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 0.0,
-        "numerator": 0,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "3",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "legal_refusal",
-      "observed_demo_outcome": "legal_refusal",
+      "query_source": "original",
       "bm25_document": null,
       "bm25_section": null,
-      "required_fact_recall": {
-        "value": null,
-        "numerator": 0,
-        "denominator": 0
-      },
-      "citation_document_coverage": {
-        "value": null,
-        "numerator": 0,
-        "denominator": 0
-      },
-      "citation_section_coverage": {
-        "value": null,
-        "numerator": 0,
-        "denominator": 0
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": null,
+          "numerator": 0,
+          "denominator": 0
+        },
+        "citation_document_coverage": {
+          "value": null,
+          "numerator": 0,
+          "denominator": 0
+        },
+        "citation_section_coverage": {
+          "value": null,
+          "numerator": 0,
+          "denominator": 0
+        },
+        "outcome": "legal_refusal",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "4",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 0.5,
-        "mrr@8": 1.0,
-        "ndcg@8": 0.6131471927654584
+        "@8": {
+          "recall": 0.5,
+          "mrr": 1.0,
+          "ndcg": 0.6131471927654584,
+          "cutoff": 8,
+          "relevant_labels": 2
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 0.7451812540517537,
+          "cutoff": 24,
+          "relevant_labels": 2
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "5",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 0.125,
-        "ndcg@8": 0.31546487678572877
+        "@8": {
+          "recall": 1.0,
+          "mrr": 0.125,
+          "ndcg": 0.31546487678572877,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.125,
+          "ndcg": 0.31546487678572877,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 0.0,
-        "mrr@8": 0.0,
-        "ndcg@8": 0.0
+        "@8": {
+          "recall": 0.0,
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 0.0,
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "6",
       "history": true,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 0.5,
-        "mrr@8": 0.14285714285714285,
-        "ndcg@8": 0.20438239758848611
+        "@8": {
+          "recall": 0.5,
+          "mrr": 0.14285714285714285,
+          "ndcg": 0.20438239758848611,
+          "cutoff": 8,
+          "relevant_labels": 2
+        },
+        "@24": {
+          "recall": 0.5,
+          "mrr": 0.14285714285714285,
+          "ndcg": 0.20438239758848611,
+          "cutoff": 24,
+          "relevant_labels": 2
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "7",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 0.16666666666666666,
-        "ndcg@8": 0.3562071871080222
+        "@8": {
+          "recall": 1.0,
+          "mrr": 0.16666666666666666,
+          "ndcg": 0.3562071871080222,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.16666666666666666,
+          "ndcg": 0.3562071871080222,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 0.0,
-        "mrr@8": 0.0,
-        "ndcg@8": 0.0
+        "@8": {
+          "recall": 0.0,
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 0.0,
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "8",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 0.0,
-        "mrr@8": 0.0,
-        "ndcg@8": 0.0
+        "@8": {
+          "recall": 0.0,
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.06666666666666667,
+          "ndcg": 0.25,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "9",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 0.0,
-        "mrr@8": 0.0,
-        "ndcg@8": 0.0
+        "@8": {
+          "recall": 0.0,
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "cutoff": 8,
+          "relevant_labels": 2
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.09090909090909091,
+          "ndcg": 0.31807342473412825,
+          "cutoff": 24,
+          "relevant_labels": 2
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "10",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "11",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 0.2,
-        "ndcg@8": 0.38685280723454163
+        "@8": {
+          "recall": 1.0,
+          "mrr": 0.2,
+          "ndcg": 0.38685280723454163,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.2,
+          "ndcg": 0.38685280723454163,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": null,
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": null,
-        "numerator": 0,
-        "denominator": 0
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": null,
+          "numerator": 0,
+          "denominator": 0
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "12",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 0.14285714285714285,
-        "ndcg@8": 0.3333333333333333
+        "@8": {
+          "recall": 1.0,
+          "mrr": 0.14285714285714285,
+          "ndcg": 0.3333333333333333,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.14285714285714285,
+          "ndcg": 0.3333333333333333,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 1.0,
-        "mrr@8": 0.14285714285714285,
-        "ndcg@8": 0.3333333333333333
+        "@8": {
+          "recall": 1.0,
+          "mrr": 0.14285714285714285,
+          "ndcg": 0.3333333333333333,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.14285714285714285,
+          "ndcg": 0.3333333333333333,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 0.0,
-        "numerator": 0,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "13",
       "history": false,
       "ambiguous_label": true,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 1.0,
-        "mrr@8": 0.3333333333333333,
-        "ndcg@8": 0.5249810332008933
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 0.8315546295836225,
+          "cutoff": 8,
+          "relevant_labels": 2
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 0.8315546295836225,
+          "cutoff": 24,
+          "relevant_labels": 2
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 0.5,
-        "numerator": 1,
-        "denominator": 2
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 0.5,
+          "numerator": 1,
+          "denominator": 2
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "14",
       "history": false,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 0.0,
-        "numerator": 0,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "15",
       "history": true,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 1.0,
-        "mrr@8": 0.25,
-        "ndcg@8": 0.43067655807339306
+        "@8": {
+          "recall": 1.0,
+          "mrr": 0.25,
+          "ndcg": 0.43067655807339306,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.25,
+          "ndcg": 0.43067655807339306,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "16",
       "history": true,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 0.0,
-        "mrr@8": 0.0,
-        "ndcg@8": 0.0
+        "@8": {
+          "recall": 0.0,
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 0.0,
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "17",
       "history": true,
       "ambiguous_label": true,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 0.0,
-        "mrr@8": 0.0,
-        "ndcg@8": 0.0
+        "@8": {
+          "recall": 0.0,
+          "mrr": 0.0,
+          "ndcg": 0.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.0625,
+          "ndcg": 0.24465054211822604,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     },
     {
       "id": "18",
       "history": true,
       "ambiguous_label": false,
       "expected_outcome": "success",
-      "observed_demo_outcome": "success",
+      "query_source": "original",
       "bm25_document": {
-        "recall@8": 1.0,
-        "mrr@8": 1.0,
-        "ndcg@8": 1.0
+        "@8": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 1.0,
+          "ndcg": 1.0,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
       "bm25_section": {
-        "recall@8": 1.0,
-        "mrr@8": 0.14285714285714285,
-        "ndcg@8": 0.3333333333333333
+        "@8": {
+          "recall": 1.0,
+          "mrr": 0.14285714285714285,
+          "ndcg": 0.3333333333333333,
+          "cutoff": 8,
+          "relevant_labels": 1
+        },
+        "@24": {
+          "recall": 1.0,
+          "mrr": 0.14285714285714285,
+          "ndcg": 0.3333333333333333,
+          "cutoff": 24,
+          "relevant_labels": 1
+        }
       },
-      "required_fact_recall": {
-        "value": 1.0,
-        "numerator": 2,
-        "denominator": 2
-      },
-      "citation_document_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "citation_section_coverage": {
-        "value": 1.0,
-        "numerator": 1,
-        "denominator": 1
-      },
-      "false_refusal": false,
-      "missed_refusal": false
+      "official_demo_output": {
+        "required_fact_recall": {
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2
+        },
+        "citation_document_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "citation_section_coverage": {
+          "value": 1.0,
+          "numerator": 1,
+          "denominator": 1
+        },
+        "outcome": "success",
+        "false_refusal": false,
+        "missed_refusal": false
+      }
     }
   ],
   "unavailable": {
@@ -733,7 +1260,8 @@
     "faiss": "N/A: query embeddings or a matching replay are not available offline",
     "fusion": "N/A: requires the unavailable FAISS query rankings",
     "qwen3": "N/A: no matching reranker replay or organizer API run",
-    "generation.claim_precision": "N/A: demo_output has no structured claims registry",
+    "analysis.retrieval_queries": "N/A: retrieval used original questions; no recorded Analysis queries",
+    "generation.claim_precision": "N/A: CSV answers have no structured claims registry",
     "generation.hallucination_rate": "N/A: free-text claims were not independently exhaustively annotated",
     "verification.precision_recall": "N/A: no independently injected error set and verifier outputs",
     "runtime.p50_p95": "N/A: demo_output contains no matched runtime trace",
