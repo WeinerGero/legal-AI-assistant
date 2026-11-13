@@ -8,6 +8,7 @@ import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from time import perf_counter
 
 import bm25s
 import faiss
@@ -190,21 +191,62 @@ class HybridIndex:
 
     def search(self, query: str, *, top_k: int = 30, final_k: int = 10) -> list[Fragment]:
         count = min(top_k, len(self.fragments))
-        bm_ids, _ = self.bm25.retrieve(bm25s.tokenize([query]), k=count)
-        vector = np.asarray(self.client.embed([query]), dtype="float32")
+        started = perf_counter()
+        try:
+            bm_ids, _ = self.bm25.retrieve(bm25s.tokenize([query]), k=count)
+        except Exception as exc:
+            self._record_rag("bm25", started, error=exc)
+            raise
+        self._record_rag(
+            "bm25",
+            started,
+            candidates_count=len({int(item) for item in bm_ids[0] if item >= 0}),
+        )
+
+        started = perf_counter()
+        try:
+            vector = np.asarray(self.client.embed([query]), dtype="float32")
+        except Exception as exc:
+            self._record_rag("embeddings", started, error=exc)
+            raise
         if vector.shape != (1, self.faiss.d):
-            raise ValueError(
+            error = ValueError(
                 f"размерность запроса {vector.shape} не совпадает с FAISS (*, {self.faiss.d})"
             )
+            self._record_rag("embeddings", started, error=error, request_count=1)
+            raise error
+        self._record_rag("embeddings", started, request_count=1, model=self.client.embedding_model)
         faiss.normalize_L2(vector)
-        _, vec_ids = self.faiss.search(vector, count)
+
+        started = perf_counter()
+        try:
+            _, vec_ids = self.faiss.search(vector, count)
+        except Exception as exc:
+            self._record_rag("faiss", started, error=exc)
+            raise
+        self._record_rag(
+            "faiss",
+            started,
+            candidates_count=len({int(item) for item in vec_ids[0] if item >= 0}),
+        )
+
+        started = perf_counter()
         scores: dict[int, float] = {}
         for ranking in (bm_ids[0].tolist(), vec_ids[0].tolist()):
             for rank, index in enumerate(ranking, 1):
                 if index >= 0:
                     scores[index] = scores.get(index, 0.0) + 1.0 / (60 + rank)
         candidates = sorted(scores, key=lambda index: (-scores[index], index))[:top_k]
-        reranked = self.client.rerank(query, [self.fragments[i].text for i in candidates], final_k)
+        self._record_rag("fusion", started, candidates_count=len(candidates))
+
+        started = perf_counter()
+        try:
+            reranked = self.client.rerank(
+                query, [self.fragments[i].text for i in candidates], final_k
+            )
+        except Exception as exc:
+            self._record_rag("rerank", started, error=exc, candidates_count=len(candidates))
+            raise
         result: list[Fragment] = []
         seen: set[int] = set()
         for index, _score in reranked:
@@ -212,7 +254,35 @@ class HybridIndex:
                 raise ValueError(f"некорректный индекс reranker: {index}")
             seen.add(index)
             result.append(self.fragments[candidates[index]])
+        self._record_rag(
+            "rerank",
+            started,
+            model=self.client.reranker_model,
+            candidates_count=len(candidates),
+            selected_fragments_count=len(result),
+            unique_sources_count=len({fragment.source for fragment in result}),
+        )
         return result
+
+    def _record_rag(
+        self,
+        stage: str,
+        started: float,
+        *,
+        error: Exception | None = None,
+        **fields,
+    ) -> None:
+        metrics = self.client.metrics
+        if metrics is None:
+            return
+        metrics.record(
+            "rag",
+            stage,
+            duration_ms=round((perf_counter() - started) * 1000, 3),
+            error_count=int(error is not None),
+            error_type=type(error).__name__ if error is not None else None,
+            **fields,
+        )
 
 
 def _load_index_fragments(raw: bytes) -> list[Fragment]:

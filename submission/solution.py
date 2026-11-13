@@ -9,19 +9,23 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 
 try:
     from core.reproducibility import DEFAULT_SEED, configure_reproducibility
     from submission.model_client import ModelClient
+    from submission.metrics import MetricsRecorder
     from submission.pipeline import SubmissionPipeline
     from submission.search import HybridIndex
 except ImportError:  # плоский корень submission.zip
     from reproducibility import DEFAULT_SEED, configure_reproducibility
     from model_client import ModelClient
+    from metrics import MetricsRecorder
     from pipeline import SubmissionPipeline
     from search import HybridIndex
 
@@ -94,31 +98,93 @@ def main(argv: list[str] | None = None) -> int:
     args = argv or []
     config = RuntimeConfig.from_env()
     configure_reproducibility(config.seed)
+    metrics_value = os.environ.get("METRICS_PATH", "").strip()
+    metrics = MetricsRecorder(Path(metrics_value)) if metrics_value else None
     questions_path = config.data_dir / "questions.csv"
     knowledge_path = config.data_dir / "knowledge-base.zip"
     output_path = Path(args[0]) if args else Path("submission.csv")
-
-    questions = read_questions(questions_path)
-    client = ModelClient(seed=config.seed)
     index_dir = Path(os.environ.get("INDEX_DIR", Path(__file__).resolve().parent))
-    index = HybridIndex.from_prebuilt(index_dir, knowledge_path, client)
-    pipeline = SubmissionPipeline(
-        index,
-        client,
-        top_k=config.top_k,
-        evidence_k=config.reranker_top_n,
-    )
-    rows: list[tuple[str, str]] = []
-    for question_id, question in questions:
+    client = ModelClient(seed=config.seed, max_tokens=config.max_tokens, metrics=metrics)
+    if metrics is not None:
+        metrics.record_config(
+            {
+                "seed": config.seed,
+                "models": {
+                    "llm": client.llm_model,
+                    "embedding": client.embedding_model,
+                    "reranker": client.reranker_model,
+                },
+                "parameters": {
+                    "temperature": config.temperature,
+                    "max_tokens": config.max_tokens,
+                    "top_k": config.top_k,
+                    "reranker_top_n": config.reranker_top_n,
+                },
+                "checksums": {
+                    name: _sha256_or_none(index_dir / name)
+                    for name in ("index.faiss", "chunks.json", "manifest.json")
+                },
+            }
+        )
+    try:
+        questions = read_questions(questions_path)
+        index_started = perf_counter()
         try:
-            answer = pipeline.run(question)
+            index = HybridIndex.from_prebuilt(index_dir, knowledge_path, client)
         except Exception as exc:
-            print(f"question {question_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
-            answer = "Не удалось получить подтверждённый ответ из-за технической ошибки."
-        rows.append((question_id, answer))
-    write_submission(output_path, rows)
-    validate_submission(output_path, [question_id for question_id, _question in questions])
-    return 0
+            if metrics is not None:
+                metrics.record(
+                    "rag",
+                    "index_load",
+                    duration_ms=round((perf_counter() - index_started) * 1000, 3),
+                    error_count=1,
+                    error_type=type(exc).__name__,
+                )
+            raise
+        if metrics is not None:
+            metrics.record(
+                "rag",
+                "index_load",
+                duration_ms=round((perf_counter() - index_started) * 1000, 3),
+                error_count=0,
+                fragments_count=len(index.fragments),
+                unique_sources_count=len({fragment.source for fragment in index.fragments}),
+            )
+        pipeline = SubmissionPipeline(
+            index,
+            client,
+            top_k=config.top_k,
+            evidence_k=config.reranker_top_n,
+        )
+        rows: list[tuple[str, str]] = []
+        for question_id, question in questions:
+            if metrics is not None:
+                metrics.set_question(question_id)
+            try:
+                answer = pipeline.run(question)
+            except Exception as exc:
+                print(f"question {question_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
+                answer = "Не удалось получить подтверждённый ответ из-за технической ошибки."
+            rows.append((question_id, answer))
+        if metrics is not None:
+            metrics.set_question(None)
+        write_submission(output_path, rows)
+        validate_submission(output_path, [question_id for question_id, _question in questions])
+        return 0
+    finally:
+        if metrics is not None:
+            metrics.set_question(None)
+            metrics.finalize()
+
+
+def _sha256_or_none(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 if __name__ == "__main__":

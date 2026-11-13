@@ -16,6 +16,7 @@ FLATTENED_MODULES: tuple[str, ...] = (
     "core/reproducibility.py",
     "submission/solution.py",
     "submission/model_client.py",
+    "submission/metrics.py",
     "submission/search.py",
     "submission/pipeline.py",
 )

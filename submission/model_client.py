@@ -6,6 +6,8 @@ import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
+from time import perf_counter
+from typing import Any
 
 import httpx
 
@@ -53,6 +55,7 @@ class ModelClient:
         timeout: float = 90.0,
         seed: int = DEFAULT_SEED,
         max_tokens: int = 1_500,
+        metrics: Any | None = None,
     ) -> None:
         local = _load_local_settings()
         def get(name: str, default: str = "") -> str:
@@ -86,6 +89,7 @@ class ModelClient:
         self.timeout = timeout
         self.seed = seed
         self.max_tokens = max_tokens
+        self.metrics = metrics
 
     def _request(
         self,
@@ -107,30 +111,65 @@ class ModelClient:
         response.raise_for_status()
         return response.json()
 
-    def complete_json(self, system_prompt: str, payload: str) -> str:
+    def complete_json(
+        self, system_prompt: str, payload: str, *, stage: str = "unspecified"
+    ) -> str:
+        started = perf_counter()
         if not self.llm_model:
-            raise RuntimeError("не задана модель генерации")
-        data = self._request(
-            "chat/completions",
-            {
-                "model": self.llm_model,
-                "temperature": 0,
-                "seed": self.seed,
-                "max_tokens": self.max_tokens,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": payload},
-                ],
-            },
-            base_url=self.base_url,
-            api_key=self.api_key,
-            service="LLM",
-        )
-        content = data["choices"][0]["message"]["content"]
+            error = RuntimeError("не задана модель генерации")
+            self._record_llm(stage, started, None, error)
+            raise error
+        try:
+            data = self._request(
+                "chat/completions",
+                {
+                    "model": self.llm_model,
+                    "temperature": 0,
+                    "seed": self.seed,
+                    "max_tokens": self.max_tokens,
+                    "response_format": {"type": "json_object"},
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": payload},
+                    ],
+                },
+                base_url=self.base_url,
+                api_key=self.api_key,
+                service="LLM",
+            )
+            content = data["choices"][0]["message"]["content"]
+        except Exception as exc:
+            self._record_llm(stage, started, None, exc)
+            raise
+        self._record_llm(stage, started, data.get("usage"), None)
         if isinstance(content, dict):
             return json.dumps(content, ensure_ascii=False)
         return str(content)
+
+    def _record_llm(
+        self,
+        stage: str,
+        started: float,
+        usage: object,
+        error: Exception | None,
+    ) -> None:
+        if self.metrics is None:
+            return
+        usage_data = usage if isinstance(usage, dict) else {}
+        self.metrics.record(
+            "llm",
+            stage,
+            model=self.llm_model,
+            duration_ms=round((perf_counter() - started) * 1000, 3),
+            request_count=1,
+            error_count=int(error is not None),
+            retry_count=0,
+            error_type=type(error).__name__ if error is not None else None,
+            http_status=getattr(getattr(error, "response", None), "status_code", None),
+            prompt_tokens=usage_data.get("prompt_tokens"),
+            completion_tokens=usage_data.get("completion_tokens"),
+            total_tokens=usage_data.get("total_tokens"),
+        )
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         data = self._request(
