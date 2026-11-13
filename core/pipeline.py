@@ -45,7 +45,7 @@ from core.contracts import (
     VerificationResultV1,
     VectorSearch,
 )
-from core.retrieval.evidence import build_evidence
+from core.retrieval.evidence import EvidenceSelection, build_evidence
 from core.retrieval.rerank import rerank_candidates
 from core.retrieval.search import HybridRetriever
 
@@ -89,6 +89,7 @@ class PipelineOutcome:
     generation: GenerationResultV1 | None = None
     verification: VerificationResultV1 | None = None
     evidence: list[Evidence] = field(default_factory=list)
+    missing_facts: list[str] = field(default_factory=list)
 
     @property
     def succeeded(self) -> bool:
@@ -130,7 +131,7 @@ class LegalPipeline:
 
     def collect_evidence(
         self, *, generation_id: UUID, analysis: AnalysisResultV1
-    ) -> list[Evidence]:
+    ) -> EvidenceSelection:
         """Точные кандидаты → BM25 + вектор → RRF → переранжирование → реестр ``E###``."""
         search = HybridRetriever(
             self._adapters.documents,
@@ -160,13 +161,12 @@ class LegalPipeline:
             top_n=self._config.reranker_top_n,
         )
 
-        selection = build_evidence(
+        return build_evidence(
             documents=self._adapters.documents,
             mandatory=outcome.mandatory,
             ranked=[chunk_id for chunk_id, _score in ranked],
             requested_facts=analysis.requested_facts,
         )
-        return selection.evidence
 
     # --- Этап 4: генерация --------------------------------------------
 
@@ -203,10 +203,11 @@ class LegalPipeline:
                 current_message=current_message,
                 current_date=current_date,
             )
-            evidence = self.collect_evidence(
+            selection = self.collect_evidence(
                 generation_id=generation_id,
                 analysis=analysis,
             )
+            evidence = selection.evidence
             generation_request = GenerationRequestV1(
                 question=analysis.standalone_question,
                 requested_facts=analysis.requested_facts,
@@ -217,6 +218,16 @@ class LegalPipeline:
                 evidence=evidence,
             )
             generation = self.generate(generation_request)
+            if selection.missing_facts:
+                generation = generation.model_copy(
+                    update={
+                        "missing_information": list(
+                            dict.fromkeys(
+                                [*generation.missing_information, *selection.missing_facts]
+                            )
+                        )
+                    }
+                )
             verification_request = VerificationRequestV1(
                 question=analysis.standalone_question,
                 requested_facts=analysis.requested_facts,
@@ -227,6 +238,19 @@ class LegalPipeline:
 
             if verification.verdict != "pass" and self._config.allow_one_repair:
                 generation = self.repair(verification_request)
+                if selection.missing_facts:
+                    generation = generation.model_copy(
+                        update={
+                            "missing_information": list(
+                                dict.fromkeys(
+                                    [
+                                        *generation.missing_information,
+                                        *selection.missing_facts,
+                                    ]
+                                )
+                            )
+                        }
+                    )
                 verification_request = verification_request.model_copy(
                     update={"generation": generation}
                 )
@@ -238,6 +262,7 @@ class LegalPipeline:
                     generation=generation,
                     verification=verification,
                     evidence=evidence,
+                    missing_facts=selection.missing_facts,
                     failure=TechnicalFailure(
                         error_code="invalid_model_output",
                         message=f"проверка ответа не пройдена: {verification.verdict}",
@@ -250,6 +275,8 @@ class LegalPipeline:
                     answer_id=str(request_id),
                     legal_status=generation.legal_status,
                     verification_status="passed",
+                    missing_information=generation.missing_information,
+                    clarification_question=generation.clarification_question,
                 )
             )
             claims = [
@@ -258,12 +285,19 @@ class LegalPipeline:
                 for segment in block.segments
             ]
             rendered = self._adapters.citations.resolve(answer_id, claims)
+            rendered = rendered.model_copy(
+                update={
+                    "missing_information": generation.missing_information,
+                    "clarification_question": generation.clarification_question,
+                }
+            )
             return PipelineOutcome(
                 answer=rendered,
                 analysis=analysis,
                 generation=generation,
                 verification=verification,
                 evidence=evidence,
+                missing_facts=selection.missing_facts,
             )
         except Exception as exc:  # граница конвейера: одна строка не роняет весь пакет
             code = "timeout" if isinstance(exc, TimeoutError) else "internal_error"

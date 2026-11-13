@@ -1,8 +1,8 @@
 """Сборка конкурсного ZIP (ARCHITECTURE.md §16.2, §13.5).
 
-Конкурсная сборка **выпрямляет** необходимые модули из ``core/`` в корневые
-``.py`` своего архива; вложенные каталоги для импортируемых модулей не нужны.
-Веб-специфические библиотеки в сборку не попадают.
+Конкурсная сборка кладёт самодостаточные модули из ``submission/`` и явно
+перечисленные инструкции моделей в корень архива. Веб-специфические модули
+``core.*`` и библиотеки в сборку не попадают.
 """
 
 from __future__ import annotations
@@ -17,6 +17,13 @@ FLATTENED_MODULES: tuple[str, ...] = (
     "submission/pipeline.py",
 )
 
+PROMPT_FILES: tuple[str, ...] = (
+    "core/prompts/analysis_v1.txt",
+    "core/prompts/generation_v1.txt",
+    "core/prompts/repair_v1.txt",
+    "core/prompts/verification_v1.txt",
+)
+
 REQUIREMENTS = """httpx==0.28.1
 numpy==1.26.4
 bm25s==0.2.14
@@ -25,7 +32,7 @@ faiss-cpu==1.8.0.post1
 
 
 def build(zip_path: Path, repo_root: Path) -> Path:
-    """Готовит архив с плоской структурой модулей ядра и ``solution.py``."""
+    """Готовит архив с плоской структурой и проверяет полный манифест."""
     sources = collect_sources(repo_root)
     missing = [str(path) for path in sources if not path.is_file()]
     if missing:
@@ -35,11 +42,8 @@ def build(zip_path: Path, repo_root: Path) -> Path:
         for source in sources:
             archive.write(source, source.name)
         archive.writestr("requirements.txt", REQUIREMENTS)
-        prompts = repo_root / "core" / "prompts"
-        for prompt in sorted(prompts.glob("*_v1.txt")):
-            archive.write(prompt, prompt.name)
     return zip_path
 
 
 def collect_sources(repo_root: Path) -> list[Path]:
-    return [repo_root / relative for relative in FLATTENED_MODULES]
+    return [repo_root / relative for relative in (*FLATTENED_MODULES, *PROMPT_FILES)]

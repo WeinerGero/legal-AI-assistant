@@ -16,10 +16,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+import re
 from typing import Final
 from uuid import UUID
 
-from core.contracts import ChunkRef, DocumentRef, DocumentRepository, Evidence
+from core.contracts import ClauseRange, ChunkRef, DocumentRef, DocumentRepository, Evidence
+
+CLAUSE_HEADING: Final[re.Pattern[str]] = re.compile(
+    r"(?im)^(?:статья|раздел|глава|пункт|п\.|ст\.)?\s*\d+(?:\.\d+)*[.)]?\s+"
+)
 
 # Маркеры положений, которым нужен соседний пункт: срок, исключение, термин.
 NEIGHBOR_MARKERS: Final[tuple[str, ...]] = (
@@ -65,6 +70,7 @@ class EvidenceDraft:
 
     chunk: ChunkRef
     document: DocumentRef
+    clause_id: UUID
     text: str
     section: str
     reason: str
@@ -202,8 +208,9 @@ def build_evidence(
             evidence_id=f"E{position:03d}",
             chunk_id=draft.chunk.chunk_id,
             document_version_id=draft.chunk.document_version_id,
-            clause_id=_primary_clause(draft.chunk),
+            clause_id=draft.clause_id,
             document_title=draft.document.title,
+            version_label=draft.document.version_label,
             section=draft.section,
             text=draft.text,
             applicability_note=draft.applicability_note,
@@ -228,12 +235,13 @@ def _explode_chunk(
     на отдельные диапазоны.
     """
     document = documents.get_document_version(chunk.document_version_id)
-    clauses = split_multi_clause_chunk(chunk)
-    if len(clauses) <= 1:
+    ranges = _clause_ranges(document, chunk)
+    if not ranges:
         return [
             EvidenceDraft(
                 chunk=chunk,
                 document=document,
+                clause_id=_primary_clause(chunk),
                 text=_slice(document, chunk),
                 section=_section_label(document, chunk.start_char),
                 reason=reason,
@@ -242,24 +250,65 @@ def _explode_chunk(
                 applicability_note=note,
             )
         ]
-    width = chunk.end_char - chunk.start_char
     parts: list[EvidenceDraft] = []
-    for offset in range(len(clauses)):
-        start = chunk.start_char + width * offset // len(clauses)
-        end = chunk.start_char + width * (offset + 1) // len(clauses)
+    for clause in ranges:
         parts.append(
             EvidenceDraft(
                 chunk=chunk,
                 document=document,
-                text=document.canonical_text[start:end],
-                section=_section_label(document, start),
+                clause_id=clause.clause_id,
+                text=document.canonical_text[clause.start_char : clause.end_char],
+                section=clause.section or _section_label(document, clause.start_char),
                 reason=reason,
-                start_char=start,
-                end_char=end,
+                start_char=clause.start_char,
+                end_char=clause.end_char,
                 applicability_note=note,
             )
         )
     return parts
+
+
+def _clause_ranges(document: DocumentRef, chunk: ChunkRef) -> list[ClauseRange]:
+    """Возвращает сохранённые границы или восстанавливает их по заголовкам.
+
+    Неоднозначный многопунктовый фрагмент отклоняется: равномерное деление
+    создавало бы ложные цитаты и неверное соответствие ``clause_id``.
+    """
+    if chunk.clause_ranges:
+        ranges = list(chunk.clause_ranges)
+        expected_ids = tuple(chunk.clause_ids)
+        actual_ids = tuple(item.clause_id for item in ranges)
+        if expected_ids and actual_ids != expected_ids:
+            raise ValueError("порядок clause_ranges не совпадает с clause_ids")
+        previous_end = chunk.start_char
+        for item in ranges:
+            if not (
+                chunk.start_char <= item.start_char < item.end_char <= chunk.end_char
+            ):
+                raise ValueError(f"границы пункта вне фрагмента: {item.clause_id}")
+            if item.start_char < previous_end:
+                raise ValueError(f"диапазоны пунктов пересекаются: {item.clause_id}")
+            previous_end = item.end_char
+        return ranges
+    clauses = split_multi_clause_chunk(chunk)
+    if len(clauses) <= 1:
+        return []
+    text = document.canonical_text[chunk.start_char : chunk.end_char]
+    starts = [match.start() for match in CLAUSE_HEADING.finditer(text)]
+    if len(starts) != len(clauses):
+        raise ValueError(
+            f"нет точных границ для {len(clauses)} пунктов фрагмента {chunk.chunk_id}"
+        )
+    return [
+        ClauseRange(
+            clause_id=clause_id,
+            start_char=chunk.start_char + start,
+            end_char=chunk.start_char + (
+                starts[index + 1] if index + 1 < len(starts) else len(text)
+            ),
+        )
+        for index, (clause_id, start) in enumerate(zip(clauses, starts, strict=True))
+    ]
 
 
 def _slice(document: DocumentRef, chunk: ChunkRef) -> str:
