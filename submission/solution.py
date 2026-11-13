@@ -12,7 +12,9 @@ import csv
 import hashlib
 import json
 import os
+import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import copy
@@ -53,6 +55,9 @@ except ImportError:
 
 MAX_ANSWER_CHARS = 10_000
 DEFAULT_TIME_LIMIT_SECONDS = 1080.0
+SUPERVISOR_TIMEOUT_SECONDS = 1100.0
+SUPERVISOR_KILL_RESERVE_SECONDS = 1.0
+WORKER_MARKER = "SUBMISSION_WORKER"
 DEFAULT_FAILURE_ANSWER = "Недостаточно подтверждённых данных в предоставленных документах."
 
 
@@ -159,6 +164,78 @@ def validate_submission(path: Path, expected_ids: list[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    args = list(argv or [])
+    if os.environ.get(WORKER_MARKER) == "1":
+        if not args or args[0] != "--worker":
+            raise RuntimeError("worker marker requires --worker")
+        return _worker_main(args[1:])
+    if "--worker" in args:
+        raise RuntimeError("--worker is reserved for the supervisor")
+    return _supervisor_main(args)
+
+
+def _supervisor_main(args: list[str]) -> int:
+    """Run the RAG worker in a killable process and preserve a complete CSV."""
+    started = time.monotonic()
+    timeout_seconds = _supervisor_timeout()
+    deadline = started + timeout_seconds
+    config = RuntimeConfig.from_env()
+    output_path = Path(args[0]) if args else Path("submission.csv")
+    questions = read_questions(config.data_dir / "questions.csv")
+    expected_ids = [question_id for question_id, _question in questions]
+    write_submission_atomic(
+        output_path,
+        [(question_id, DEFAULT_FAILURE_ANSWER) for question_id in expected_ids],
+    )
+    environment = os.environ.copy()
+    environment[WORKER_MARKER] = "1"
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--worker",
+        str(output_path.resolve()),
+    ]
+    process = subprocess.Popen(command, env=environment)
+    forced = False
+    worker_code: int | None = None
+    try:
+        wait_seconds = max(
+            0.0,
+            deadline - time.monotonic() - SUPERVISOR_KILL_RESERVE_SECONDS,
+        )
+        try:
+            worker_code = process.wait(timeout=wait_seconds)
+        except subprocess.TimeoutExpired:
+            forced = True
+            process.kill()
+            remaining = max(0.05, deadline - time.monotonic())
+            try:
+                worker_code = process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("worker process did not stop before the hard deadline")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    validate_submission(output_path, expected_ids)
+    if forced or worker_code != 0:
+        print(
+            f"supervisor: worker_code={worker_code} forced={forced} "
+            f"elapsed={time.monotonic() - started:.3f}s; CSV preserved",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def _supervisor_timeout() -> float:
+    try:
+        configured = float(os.environ.get("SUPERVISOR_TIMEOUT_SECONDS", ""))
+    except (TypeError, ValueError):
+        configured = SUPERVISOR_TIMEOUT_SECONDS
+    return max(1.0, min(SUPERVISOR_TIMEOUT_SECONDS, configured))
+
+
+def _worker_main(argv: list[str] | None = None) -> int:
     args = argv or []
     config = RuntimeConfig.from_env()
     budget = RuntimeBudget.start(config.time_limit_seconds)
