@@ -149,9 +149,7 @@ class ModelClient:
                 {
                     "model": self.llm_model,
                     "temperature": 0,
-                    "seed": self.seed,
                     "max_tokens": self.max_tokens,
-                    "response_format": {"type": "json_object"},
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": payload},
