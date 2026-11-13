@@ -7,14 +7,82 @@
 - применимые дополнительные соглашения и противоречащие положения;
 - для каждого ``requested_fact`` проверяется достаточность набора;
 - один ``evidence_id`` описывает один точный диапазон одной редакции.
+
+Модуль работает только с ``ChunkRef`` и портом ``DocumentRepository``:
+никаких обращений к БД, FAISS или клиентам моделей.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from typing import Final
 from uuid import UUID
 
-from core.contracts import ChunkRef, Evidence
+from core.contracts import ChunkRef, DocumentRef, DocumentRepository, Evidence
+
+# Маркеры положений, которым нужен соседний пункт: срок, исключение, термин.
+NEIGHBOR_MARKERS: Final[tuple[str, ...]] = (
+    "срок",
+    "в течение",
+    "не позднее",
+    "до истечения",
+    "если иное",
+    "за исключением",
+    "исключение",
+    "не применяется",
+    "не распространяется",
+    "для целей настоящего",
+    "означает",
+    "понимается",
+    "определени",
+    "датой поставки",
+    "датой подписания",
+)
+
+# Маркеры положений, задающих иную редакцию правила.
+CONTRADICTION_MARKERS: Final[tuple[str, ...]] = (
+    "утратил силу",
+    "не действует",
+    "признан утратившим",
+    "изложить в новой редакции",
+    "исключить",
+    "дополнить",
+)
+
+# Основа слова короче этого порога не даёт надёжного совпадения.
+MIN_STEM_LENGTH: Final[int] = 3
+
+# Минимальная доля совпавших основ, при которой факт считается покрытым.
+# Проверка лексическая, поэтому полного совпадения всех словоформ
+# в русском тексте ожидать нельзя.
+MIN_FACT_COVERAGE_PERCENT: Final[int] = 60
+
+
+@dataclass(slots=True)
+class EvidenceDraft:
+    """Кандидат в реестр до присвоения ``E###``."""
+
+    chunk: ChunkRef
+    document: DocumentRef
+    text: str
+    section: str
+    reason: str
+    start_char: int
+    end_char: int
+    applicability_note: str | None = None
+
+
+@dataclass(slots=True)
+class EvidenceSelection:
+    """Результат отбора: реестр и диагностика достаточности."""
+
+    evidence: list[Evidence]
+    missing_facts: list[str]
+
+    @property
+    def sufficient(self) -> bool:
+        return not self.missing_facts
 
 
 def assign_evidence_ids(records: Sequence[Evidence]) -> list[Evidence]:
@@ -34,8 +102,8 @@ def missing_facts(
     Если вопрос требует одновременно срока и точки начала отсчёта,
     наличие только срока недостаточно.
     """
-    covered = {fact.strip().lower() for fact in covered_facts}
-    return [fact for fact in requested_facts if fact.strip().lower() not in covered]
+    covered = {_normalize(text) for text in covered_facts}
+    return [fact for fact in requested_facts if _normalize(fact) not in covered]
 
 
 def split_multi_clause_chunk(chunk: ChunkRef) -> list[UUID]:
@@ -45,3 +113,184 @@ def split_multi_clause_chunk(chunk: ChunkRef) -> list[UUID]:
     как на единый юридический пункт.
     """
     return list(chunk.clause_ids)
+
+
+def is_contradicting(text: str) -> bool:
+    """Признак положения, которое задаёт иную редакцию правила."""
+    lowered = text.lower()
+    return any(marker in lowered for marker in CONTRADICTION_MARKERS)
+
+
+def needs_neighbor(text: str) -> bool:
+    """Признак положения, которому нужен соседний пункт для полноты."""
+    lowered = text.lower()
+    return any(marker in lowered for marker in NEIGHBOR_MARKERS)
+
+
+def covered_facts(records: Sequence[Evidence], requested_facts: Sequence[str]) -> list[str]:
+    """Определяет, какие запрошенные факты подтверждаются текстом доказательств.
+
+    Проверка лексическая и намеренно консервативная: совпадение основ
+    значимых слов. Недостаточная уверенность трактуется как
+    «факт не покрыт», а не наоборот.
+    """
+    if not records:
+        return []
+    tokens: set[str] = set()
+    for record in records:
+        tokens.update(_normalize(record.text).split())
+    result: list[str] = []
+    for fact in requested_facts:
+        stems = [stem for stem in _fact_stems(fact) if len(stem) >= MIN_STEM_LENGTH]
+        # Все значимые основы сразу не найти: в тексте они стоят в других
+        # формах (провер- / проверить, качеств- / качества). Доля совпадений
+        # отсекает факты, для которых оснований в наборе нет вовсе.
+        matched = sum(1 for stem in stems if any(stem in token for token in tokens))
+        if stems and matched * 100 >= len(stems) * MIN_FACT_COVERAGE_PERCENT:
+            result.append(fact)
+    return result
+
+
+def build_evidence(
+    *,
+    documents: DocumentRepository,
+    mandatory: Sequence[ChunkRef],
+    ranked: Sequence[UUID],
+    requested_facts: Sequence[str],
+    applicability_notes: dict[UUID, str] | None = None,
+    max_items: int = 20,
+) -> EvidenceSelection:
+    """Собирает реестр ``E###`` из обязательных и переранжированных фрагментов.
+
+    Порядок фиксирован: сначала обязательные по реквизитам положения
+    в порядке выдачи SQL, затем отобранные ранжированием. Так нумерация
+    ``evidence_id`` воспроизводима при одинаковом входе.
+    """
+    notes = applicability_notes or {}
+    ordered: list[ChunkRef] = []
+    reasons: dict[UUID, str] = {}
+    for chunk in mandatory:
+        if chunk.chunk_id not in reasons:
+            reasons[chunk.chunk_id] = "mandatory"
+            ordered.append(chunk)
+    for chunk_id in ranked:
+        if len(ordered) >= max_items:
+            break
+        if chunk_id in reasons:
+            continue
+        reasons[chunk_id] = "ranked"
+        ordered.append(documents.get_chunk(chunk_id))
+
+    drafts: list[EvidenceDraft] = []
+    for chunk in ordered:
+        drafts.extend(
+            _explode_chunk(
+                documents=documents,
+                chunk=chunk,
+                note=notes.get(chunk.chunk_id),
+                reason=reasons[chunk.chunk_id],
+            )
+        )
+        if len(drafts) >= max_items:
+            break
+    # Один ``evidence_id`` — один точный диапазон: лимит применяется
+    # к готовым диапазонам, а не к фрагментам до раскрытия по пунктам.
+    drafts = drafts[:max_items]
+
+    records = [
+        Evidence(
+            evidence_id=f"E{position:03d}",
+            chunk_id=draft.chunk.chunk_id,
+            document_version_id=draft.chunk.document_version_id,
+            clause_id=_primary_clause(draft.chunk),
+            document_title=draft.document.title,
+            section=draft.section,
+            text=draft.text,
+            applicability_note=draft.applicability_note,
+        )
+        for position, draft in enumerate(drafts, start=1)
+    ]
+    missing = missing_facts(requested_facts, covered_facts(records, requested_facts))
+    return EvidenceSelection(evidence=records, missing_facts=missing)
+
+
+def _explode_chunk(
+    *,
+    documents: DocumentRepository,
+    chunk: ChunkRef,
+    note: str | None,
+    reason: str,
+) -> list[EvidenceDraft]:
+    """Раскрывает фрагмент по границам положений (§7.6).
+
+    Один ``evidence_id`` описывает один точный диапазон одной редакции,
+    поэтому фрагмент, пересекающий несколько пунктов, разбивается
+    на отдельные диапазоны.
+    """
+    document = documents.get_document_version(chunk.document_version_id)
+    clauses = split_multi_clause_chunk(chunk)
+    if len(clauses) <= 1:
+        return [
+            EvidenceDraft(
+                chunk=chunk,
+                document=document,
+                text=_slice(document, chunk),
+                section=_section_label(document, chunk.start_char),
+                reason=reason,
+                start_char=chunk.start_char,
+                end_char=chunk.end_char,
+                applicability_note=note,
+            )
+        ]
+    width = chunk.end_char - chunk.start_char
+    parts: list[EvidenceDraft] = []
+    for offset in range(len(clauses)):
+        start = chunk.start_char + width * offset // len(clauses)
+        end = chunk.start_char + width * (offset + 1) // len(clauses)
+        parts.append(
+            EvidenceDraft(
+                chunk=chunk,
+                document=document,
+                text=document.canonical_text[start:end],
+                section=_section_label(document, start),
+                reason=reason,
+                start_char=start,
+                end_char=end,
+                applicability_note=note,
+            )
+        )
+    return parts
+
+
+def _slice(document: DocumentRef, chunk: ChunkRef) -> str:
+    text = document.canonical_text[chunk.start_char : chunk.end_char]
+    if not text:
+        return chunk.search_text
+    return text
+
+
+def _section_label(document: DocumentRef, position: int) -> str:
+    """Метка пункта для человека; при неуверенности — без выдуманного номера."""
+    line_start = document.canonical_text.rfind("\n", 0, position) + 1
+    line = document.canonical_text[line_start:].split("\n", 1)[0].strip()
+    lowered = line.lower()
+    for marker in ("пункт", "п.", "статья", "ст.", "раздел", "глава", "строка"):
+        if lowered.startswith(marker):
+            return line[:80]
+    return ""
+
+
+def _primary_clause(chunk: ChunkRef) -> UUID:
+    """Основное положение диапазона; фрагмент без связей получает свой id."""
+    if chunk.clause_ids:
+        return chunk.clause_ids[0]
+    return chunk.chunk_id
+
+
+def _normalize(text: str) -> str:
+    return " ".join("".join(c if c.isalnum() else " " for c in text.lower()).split())
+
+
+def _fact_stems(fact: str) -> Iterable[str]:
+    for token in _normalize(fact).split():
+        yield token[:-2] if len(token) >= 5 else token

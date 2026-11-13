@@ -29,6 +29,7 @@ from core.contracts import (
     DialogContext,
     DocumentRepository,
     EmbeddingProvider,
+    EntityValue,
     Evidence,
     GenerationRequestV1,
     GenerationResultV1,
@@ -43,6 +44,9 @@ from core.contracts import (
     VerificationResultV1,
     VectorSearch,
 )
+from core.retrieval.evidence import build_evidence
+from core.retrieval.rerank import rerank_candidates
+from core.retrieval.search import HybridRetriever
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +130,42 @@ class LegalPipeline:
     def collect_evidence(
         self, *, generation_id: UUID, analysis: AnalysisResultV1
     ) -> list[Evidence]:
-        raise NotImplementedError("реализация в core/retrieval/evidence.py")
+        """Точные кандидаты → BM25 + вектор → RRF → переранжирование → реестр ``E###``."""
+        search = HybridRetriever(
+            self._adapters.documents,
+            self._adapters.lexical,
+            self._adapters.vectors,
+            self._adapters.embeddings,
+            top_k=self._config.top_k_lexical,
+            rrf_k=self._config.rrf_k,
+        )
+        contract_number, counterparty = _exact_references(analysis)
+        outcome = search.search(
+            generation_id=generation_id,
+            lexical_queries=analysis.search_queries.lexical,
+            semantic_queries=analysis.search_queries.semantic,
+            contract_number=contract_number,
+            counterparty=counterparty,
+        )
+
+        candidates = [
+            (chunk_id, self._adapters.documents.get_chunk(chunk_id))
+            for chunk_id, _score in outcome.ranked[: self._config.rerank_candidates]
+        ]
+        ranked = rerank_candidates(
+            self._adapters.reranker,
+            query=analysis.standalone_question,
+            candidates=[(chunk_id, chunk.search_text) for chunk_id, chunk in candidates],
+            top_n=self._config.reranker_top_n,
+        )
+
+        selection = build_evidence(
+            documents=self._adapters.documents,
+            mandatory=outcome.mandatory,
+            ranked=[chunk_id for chunk_id, _score in ranked],
+            requested_facts=analysis.requested_facts,
+        )
+        return selection.evidence
 
     # --- Этап 4: генерация --------------------------------------------
 
@@ -167,3 +206,26 @@ class LegalPipeline:
     ) -> PipelineOutcome:
         """Асинхронная обёртка, используемая worker-процессом."""
         raise NotImplementedError("асинхронный запуск поверх run()")
+
+
+def _verified(entity: EntityValue | None) -> str | None:
+    """Реквизит годится для точного SQL-поиска, только если он подтверждён.
+
+    Непроверенный или унаследованный от контекста реквизит может относиться
+    к другому договору, поэтому в обязательные кандидаты он не попадает.
+    """
+    if (
+        entity is None
+        or entity.verification != "verified_in_corpus"
+        or not entity.value
+    ):
+        return None
+    return entity.value
+
+
+def _exact_references(analysis: AnalysisResultV1) -> tuple[str | None, str | None]:
+    """Извлекает реквизиты договора и контрагента для точного поиска (§7.3)."""
+    return (
+        _verified(analysis.entities.get("contract_number")),
+        _verified(analysis.entities.get("counterparty")),
+    )

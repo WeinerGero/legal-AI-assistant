@@ -62,11 +62,20 @@ class HybridRetriever:
             )
         )
 
-        lexical_lists = [self._lexical.search(generation_id, q, self._top_k) for q in lexical_queries]
+        # Пустая формулировка после нормализации ничего не ищет и только
+        # размывает ранжирование (§7.2: запросы приходят из нормализации).
+        lexical = _non_blank(lexical_queries)
+        semantic = _non_blank(semantic_queries)
+
+        lexical_lists = [self._lexical.search(generation_id, q, self._top_k) for q in lexical]
         semantic_lists: list[list[tuple[UUID, float]]] = []
-        for query in semantic_queries:
-            vector = next(iter(self._embeddings.embed([query])))
-            semantic_lists.append(list(self._vectors.search(generation_id, vector, self._top_k)))
+        for query in semantic:
+            vectors = self._embeddings.embed([query])
+            if not vectors:
+                raise ValueError(f"провайдер эмбеддингов вернул пустой результат: {query!r}")
+            semantic_lists.append(
+                list(self._vectors.search(generation_id, vectors[0], self._top_k))
+            )
 
         ranked = reciprocal_rank_fusion(
             {
@@ -76,3 +85,9 @@ class HybridRetriever:
             k=self._rrf_k,
         )
         return SearchOutcome(mandatory=mandatory, ranked=ranked)
+
+
+def _non_blank(queries: list[str]) -> list[str]:
+    """Отбрасывает пустые формулировки, сохраняя порядок и дубликаты."""
+    return [query for query in queries if query.strip()]
+
