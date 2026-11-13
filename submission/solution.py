@@ -21,12 +21,14 @@ try:
     from submission.model_client import ModelClient
     from submission.metrics import MetricsRecorder
     from submission.pipeline import SubmissionPipeline
+    from submission.recording import ReplayMismatchError
     from submission.search import HybridIndex
 except ImportError:  # плоский корень submission.zip
     from reproducibility import DEFAULT_SEED, configure_reproducibility
     from model_client import ModelClient
     from metrics import MetricsRecorder
     from pipeline import SubmissionPipeline
+    from recording import ReplayMismatchError
     from search import HybridIndex
 
 MAX_ANSWER_CHARS = 10_000
@@ -169,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
             client.recording.set_question(question_id)
             try:
                 answer = pipeline.run(question)
+            except ReplayMismatchError:
+                raise
             except Exception as exc:
                 print(f"question {question_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
                 answer = "Не удалось получить подтверждённый ответ из-за технической ошибки."

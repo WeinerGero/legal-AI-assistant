@@ -23,10 +23,9 @@ FLATTENED_MODULES: tuple[str, ...] = (
 )
 
 PROMPT_FILES: tuple[str, ...] = (
-    "core/prompts/analysis_v1.txt",
-    "core/prompts/generation_v1.txt",
-    "core/prompts/repair_v1.txt",
-    "core/prompts/verification_v1.txt",
+    "core/prompts/analysis_v2.txt",
+    "core/prompts/generation_v2.txt",
+    "core/prompts/verification_v2.txt",
 )
 
 ASSET_FILES: dict[str, str] = {

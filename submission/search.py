@@ -352,7 +352,9 @@ def _validate_bundle(
     if expected_dimension is not None and int(expected_dimension) != index.d:
         raise ValueError(f"размерность FAISS {index.d} не совпадает с manifest {expected_dimension}")
     expected_model = manifest.get("embedding_model") or manifest.get("model")
-    if expected_model and str(expected_model) != embedding_model:
+    if expected_model and _canonical_embedding_model(str(expected_model)) != _canonical_embedding_model(
+        embedding_model
+    ):
         raise ValueError(
             f"модель индекса {expected_model!r} не совпадает с EMB_MODEL {embedding_model!r}"
         )
@@ -449,6 +451,15 @@ def _validate_member_name(name: str) -> None:
     path = PurePosixPath(name)
     if not name or name.startswith(("/", "\\")) or "\\" in name or ".." in path.parts:
         raise ValueError(f"небезопасный путь внутри ZIP: {name!r}")
+
+
+def _canonical_embedding_model(model: str) -> str:
+    normalized = model.strip().lower().replace("_", "-")
+    aliases = {
+        "baai/bge-m3": "baai/bge-m3",
+        "bge-m3": "baai/bge-m3",
+    }
+    return aliases.get(normalized, model.strip())
 
 
 def _fragments_sha256(fragments: list[Fragment]) -> str:
