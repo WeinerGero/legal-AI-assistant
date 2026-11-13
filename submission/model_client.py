@@ -101,6 +101,24 @@ class ModelClient:
         self.metrics = metrics
         self.recording = recording or APIRecordingStore.from_env()
         self.budget = budget
+        self.reset_question_trace()
+
+    def reset_question_trace(self) -> None:
+        self._question_trace: dict[str, Any] = {
+            "stage": None,
+            "error_type": None,
+            "error_stage": None,
+            "http_status": None,
+            "retries": 0,
+            "api_calls": 0,
+            "fallback_used": False,
+        }
+
+    def mark_fallback(self) -> None:
+        self._question_trace["fallback_used"] = True
+
+    def question_trace(self) -> dict[str, Any]:
+        return dict(self._question_trace)
 
     def _request(
         self,
@@ -163,6 +181,18 @@ class ModelClient:
                 self.recording.save_error(key, exc, service=service, stage=stage)
             raise
         finally:
+            self._question_trace.update(
+                {
+                    "stage": stage,
+                    "error_type": type(error).__name__ if error is not None else self._question_trace["error_type"],
+                    "error_stage": stage if error is not None else self._question_trace["error_stage"],
+                    "http_status": getattr(getattr(error, "response", None), "status_code", None)
+                    if error is not None
+                    else self._question_trace["http_status"],
+                    "retries": int(self._question_trace["retries"]) + retries,
+                    "api_calls": int(self._question_trace["api_calls"]) + 1,
+                }
+            )
             if self.metrics is not None:
                 self.metrics.record(
                     "api",

@@ -218,6 +218,43 @@ def _supervisor_main(args: list[str]) -> int:
             process.kill()
             process.wait()
     validate_submission(output_path, expected_ids)
+    with output_path.open(encoding="utf-8", newline="") as handle:
+        final_rows = list(csv.DictReader(handle))
+    technical_ids = [
+        row["id"] for row in final_rows if row["answer"].strip() == DEFAULT_FAILURE_ANSWER
+    ]
+    if forced or worker_code != 0:
+        for question_id in technical_ids:
+            print(
+                json.dumps(
+                    {
+                        "event": "question_complete",
+                        "question_id": question_id,
+                        "stage": "supervisor",
+                        "duration_ms": None,
+                        "error_type": "WorkerTerminated" if forced else "WorkerFailed",
+                        "http_status": None,
+                        "retries": None,
+                        "fallback_used": True,
+                        "final_state": "technical_refusal",
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+    print(
+        json.dumps(
+            {
+                "event": "supervisor_summary",
+                "questions_total": len(expected_ids),
+                "technical_refusals": len(technical_ids),
+                "quality_of_nondefault_answers": None,
+            },
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+    )
     if forced or worker_code != 0:
         print(
             f"supervisor: worker_code={worker_code} forced={forced} "
@@ -299,6 +336,9 @@ def _worker_main(argv: list[str] | None = None) -> int:
                                           evidence_k=config.reranker_top_n)
             concurrent = client.recording.mode == "live" and config.max_workers > 1
             def solve(position: int, question_id: str, question: str) -> tuple[int, str]:
+                question_started = perf_counter()
+                final_state = "technical_refusal"
+                terminal_error: str | None = None
                 if concurrent:
                     worker_client = ModelClient(
                         seed=config.seed,
@@ -316,6 +356,9 @@ def _worker_main(argv: list[str] | None = None) -> int:
                 else:
                     worker_client = client
                     worker_pipeline = pipeline
+                worker_client.reset_question_trace()
+                if index_mode != "bundled":
+                    worker_client.mark_fallback()
                 if metrics is not None:
                     metrics.set_question(question_id)
                 worker_client.recording.set_question(question_id)
@@ -323,14 +366,20 @@ def _worker_main(argv: list[str] | None = None) -> int:
                     budget.require(f"question {question_id}")
                     try:
                         answer = worker_pipeline.run(question)
+                        final_state = str(
+                            worker_pipeline.last_outcome.get("state", "success")
+                        )
                     except ReplayMismatchError:
                         raise
-                    except BudgetExceededError:
+                    except BudgetExceededError as exc:
+                        terminal_error = type(exc).__name__
                         answer = DEFAULT_FAILURE_ANSWER
                     except Exception as exc:
+                        terminal_error = type(exc).__name__
                         print(f"Вопрос {question_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
                         try:
                             budget.require("recovery answer", reserve_seconds=15.0)
+                            worker_client.mark_fallback()
                             answer = worker_pipeline.recovery_answer(question)
                         except ReplayMismatchError:
                             raise
@@ -339,6 +388,36 @@ def _worker_main(argv: list[str] | None = None) -> int:
                             answer = DEFAULT_FAILURE_ANSWER
                     return position, answer
                 finally:
+                    trace = worker_client.question_trace()
+                    if terminal_error and not trace.get("error_type"):
+                        trace["error_type"] = terminal_error
+                    if (
+                        final_state == "success"
+                        and trace.get("error_stage") in {"embeddings", "rerank"}
+                    ):
+                        trace["fallback_used"] = True
+                    event = {
+                        "event": "question_complete",
+                        "question_id": question_id,
+                        "stage": trace.get("stage"),
+                        "duration_ms": round((perf_counter() - question_started) * 1000, 3),
+                        "error_type": trace.get("error_type"),
+                        "http_status": trace.get("http_status"),
+                        "retries": trace.get("retries", 0),
+                        "fallback_used": bool(trace.get("fallback_used")),
+                        "final_state": final_state,
+                    }
+                    print(json.dumps(event, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+                    if metrics is not None:
+                        metrics.record(
+                            "outcome",
+                            "question",
+                            **{
+                                ("api_stage" if key == "stage" else key): value
+                                for key, value in event.items()
+                                if key != "event"
+                            },
+                        )
                     worker_client.recording.set_question(None)
                     if metrics is not None:
                         metrics.set_question(None)
@@ -413,9 +492,12 @@ def _worker_main(argv: list[str] | None = None) -> int:
         finally:
             if metrics is not None:
                 metrics.set_question(None)
-                summary = metrics.finalize()
-                print("Метрики: " + json.dumps(summary, ensure_ascii=False, default=str)[:2000],
-                      file=sys.stderr)
+                try:
+                    summary = metrics.finalize()
+                    print("Метрики: " + json.dumps(summary, ensure_ascii=False, default=str)[:2000],
+                          file=sys.stderr)
+                except Exception as exc:
+                    print(f"Необязательные метрики недоступны: {type(exc).__name__}", file=sys.stderr)
 
 
 def _sha256_or_none(path: Path) -> str | None:

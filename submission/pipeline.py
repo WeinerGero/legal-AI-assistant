@@ -22,6 +22,7 @@ ROLE_LINE = re.compile(r"(?im)^(user|assistant|пользователь|асси
 CLAIM_STATUSES = {"supported", "partially_supported", "unsupported", "contradicted"}
 VERDICTS = {"pass", "revision_required", "insufficient_evidence"}
 REVISION_MIN_REMAINING_SECONDS = 90.0
+MAX_RENDERED_ANSWER_CHARS = 10_000
 
 
 class SubmissionPipeline:
@@ -33,6 +34,7 @@ class SubmissionPipeline:
         self.analysis_prompt = _load_prompt("analysis_v2.txt")
         self.generation_prompt = _load_prompt("generation_v2.txt")
         self.verification_prompt = _load_prompt("verification_v2.txt")
+        self.last_outcome: dict[str, object] = {}
 
     def run(self, question: str) -> str:
         started = perf_counter()
@@ -111,15 +113,49 @@ class SubmissionPipeline:
                 result = _render_citations(
                     generation, evidence, target_language=analysis["target_language"]
                 )
+                retained_claims = len(generation["claims"])
+                answer_state = (
+                    "legal_refusal"
+                    if generation.get("answer_type") == "insufficient_evidence"
+                    else "success"
+                )
             else:
-                result = _insufficient_evidence_answer(analysis["target_language"])
+                partial = _render_verified_partial_answer(
+                    generation,
+                    verification,
+                    evidence,
+                    target_language=analysis["target_language"],
+                )
+                if partial is None:
+                    result = _insufficient_evidence_answer(analysis["target_language"])
+                    retained_claims = 0
+                    answer_state = "legal_refusal"
+                else:
+                    result, retained_claims = partial
+                    answer_state = "success"
+            total_claims = len(generation["claims"])
+            self.last_outcome = {
+                "state": answer_state,
+                "retained_claims": retained_claims,
+                "total_claims": total_claims,
+                "retained_claims_rate": retained_claims / total_claims if total_claims else 0.0,
+                "verification": verification["verdict"],
+            }
             self._record_quality(
                 "question", revised=int(revised), verified_pass=int(verification["verdict"] == "pass"),
-                answer_length=len(result),
+                answer_length=len(result), retained_claims=retained_claims,
+                retained_claims_rate=retained_claims / total_claims if total_claims else 0.0,
+                answer_state=answer_state,
             )
             self._record_question(started, generation, verification, technical_failure=False)
             return result
         except Exception as exc:
+            self.last_outcome = {
+                "state": "technical_refusal",
+                "retained_claims": 0,
+                "total_claims": 0,
+                "retained_claims_rate": 0.0,
+            }
             self._record_question(started, None, None, technical_failure=True, error=exc)
             raise
 
@@ -438,6 +474,79 @@ def _validate_verification(verification: dict, generation: dict, evidence: list[
             raise ValueError("verification pass содержит unanswered_facts")
         if issues:
             raise ValueError("verification pass содержит issues")
+
+
+def _render_verified_partial_answer(
+    generation: dict,
+    verification: dict,
+    evidence: list[dict],
+    *,
+    target_language: str,
+) -> tuple[str, int] | None:
+    """Publish only completely checked supported claims without another model call."""
+    if verification.get("verdict") != "revision_required":
+        return None
+    claims = generation.get("claims", [])
+    checks = verification.get("claim_checks", [])
+    claim_ids = {claim["claim_id"] for claim in claims}
+    if {check.get("claim_id") for check in checks} != claim_ids:
+        return None
+    if any(check.get("status") == "contradicted" for check in checks):
+        return None
+    supported_ids = {
+        check["claim_id"]
+        for check in checks
+        if check.get("status") == "supported"
+    }
+    if not supported_ids:
+        return None
+    registry = {item["evidence_id"]: item for item in evidence}
+    retained: list[dict] = []
+    for claim in claims:
+        if claim["claim_id"] not in supported_ids:
+            continue
+        if any(
+            evidence_id not in registry
+            or not str(registry[evidence_id].get("document") or "").strip()
+            or not str(registry[evidence_id].get("section") or "").strip()
+            for evidence_id in claim["evidence_ids"]
+        ):
+            return None
+        candidate_claims = [*retained, claim]
+        candidate_generation = {
+            "answer": "\n".join(
+                f"{item['text'].strip()} "
+                + " ".join(f"[{evidence_id}]" for evidence_id in item["evidence_ids"])
+                for item in candidate_claims
+            ),
+            "claims": candidate_claims,
+        }
+        rendered = _render_citations(
+            candidate_generation,
+            evidence,
+            target_language=target_language,
+        )
+        if len(rendered) > MAX_RENDERED_ANSWER_CHARS:
+            break
+        retained.append(claim)
+    if not retained:
+        return None
+    partial_generation = {
+        "answer": "\n".join(
+            f"{claim['text'].strip()} "
+            + " ".join(f"[{evidence_id}]" for evidence_id in claim["evidence_ids"])
+            for claim in retained
+        ),
+        "claims": retained,
+    }
+    return (
+        _render_citations(
+            partial_generation,
+            evidence,
+            target_language=target_language,
+        ),
+        len(retained),
+    )
 
 
 def _render_citations(generation: dict, evidence: list[dict], *, target_language: str) -> str:

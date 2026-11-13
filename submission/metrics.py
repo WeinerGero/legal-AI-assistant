@@ -108,6 +108,11 @@ class MetricsRecorder:
             for event in self.events
             if event["kind"] == "budget" and event["stage"] == "revision"
         ]
+        outcome_events = [
+            event
+            for event in self.events
+            if event["kind"] == "outcome" and event["stage"] == "question"
+        ]
         budget_summary = {
             name: budget_events[-1].get(name)
             for name in (
@@ -143,6 +148,15 @@ class MetricsRecorder:
                 "api_errors": sum(int(event.get("error_count", 0)) for event in api_events),
                 "api_retries": sum(int(event.get("retry_count", 0)) for event in api_events),
                 "repeated_generations": sum(int(event.get("executed", 0)) for event in revision_events),
+                "substantive_answers": sum(
+                    event.get("final_state") == "success" for event in outcome_events
+                ),
+                "legal_refusals": sum(
+                    event.get("final_state") == "legal_refusal" for event in outcome_events
+                ),
+                "technical_refusals": sum(
+                    event.get("final_state") == "technical_refusal" for event in outcome_events
+                ),
                 "budget": budget_summary,
                 "tokens": tokens,
             },
