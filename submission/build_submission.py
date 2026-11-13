@@ -27,22 +27,24 @@ PROMPT_FILES: tuple[str, ...] = (
     "core/prompts/verification_v1.txt",
 )
 
-REQUIREMENTS = """httpx==0.27.2
-numpy==1.26.4
-bm25s==0.2.14
-faiss-cpu==1.16.0
-"""
+ASSET_FILES: dict[str, str] = {
+    "requirements.txt": "data/organizers/requirements.txt",
+    "index.faiss": "data/index/bge_m3/index.faiss",
+    "chunks.json": "data/index/bge_m3/chunks.json",
+    "manifest.json": "data/index/bge_m3/manifest.json",
+}
 
 
 def build(zip_path: Path, repo_root: Path) -> Path:
     """Готовит архив с плоской структурой и проверяет полный манифест."""
     sources = collect_sources(repo_root)
-    missing = [str(path) for path in sources if not path.is_file()]
+    assets = [(name, repo_root / relative) for name, relative in ASSET_FILES.items()]
+    missing = [str(path) for path in [*sources, *(path for _name, path in assets)] if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"не найдены файлы сборки: {', '.join(missing)}")
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     entries = [(source.name, source.read_bytes()) for source in sources]
-    entries.append(("requirements.txt", REQUIREMENTS.encode("utf-8")))
+    entries.extend((name, path.read_bytes()) for name, path in assets)
     with zipfile.ZipFile(
         zip_path,
         "w",

@@ -18,12 +18,12 @@ try:
     from core.reproducibility import DEFAULT_SEED, configure_reproducibility
     from submission.model_client import ModelClient
     from submission.pipeline import SubmissionPipeline
-    from submission.search import HybridIndex, load_fragments
+    from submission.search import HybridIndex
 except ImportError:  # плоский корень submission.zip
     from reproducibility import DEFAULT_SEED, configure_reproducibility
     from model_client import ModelClient
     from pipeline import SubmissionPipeline
-    from search import HybridIndex, load_fragments
+    from search import HybridIndex
 
 MAX_ANSWER_CHARS = 10_000
 
@@ -100,13 +100,8 @@ def main(argv: list[str] | None = None) -> int:
 
     questions = read_questions(questions_path)
     client = ModelClient(seed=config.seed)
-    index_dir = Path(os.environ.get("INDEX_DIR", config.data_dir / "index" / "bge_m3"))
-    if HybridIndex.archive_has_prebuilt(knowledge_path):
-        index = HybridIndex.from_archive(knowledge_path, client)
-    elif (index_dir / "index.faiss").is_file():
-        index = HybridIndex.from_prebuilt(index_dir, knowledge_path, client)
-    else:
-        index = HybridIndex(load_fragments(knowledge_path), client)
+    index_dir = Path(os.environ.get("INDEX_DIR", Path(__file__).resolve().parent))
+    index = HybridIndex.from_prebuilt(index_dir, knowledge_path, client)
     pipeline = SubmissionPipeline(
         index,
         client,

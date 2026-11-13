@@ -33,6 +33,12 @@ class Fragment:
     relations: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class DocumentHashes:
+    raw_sha256: str
+    text_sha256: str
+
+
 def load_fragments(path: Path, *, max_chars: int = 1800, overlap: int = 200) -> list[Fragment]:
     fragments: list[Fragment] = []
     with zipfile.ZipFile(path) as archive:
@@ -126,7 +132,7 @@ class HybridIndex:
             chunks_bytes = archive.read("chunks.json")
             manifest_bytes = archive.read("manifest.json")
             document_hashes = {
-                name: hashlib.sha256(archive.read(name)).hexdigest()
+                name: _document_hashes(archive.read(name))
                 for name in sorted(names - INDEX_MEMBERS)
                 if not name.endswith("/")
             }
@@ -145,6 +151,7 @@ class HybridIndex:
             chunks_bytes=chunks_bytes,
             embedding_model=client.embedding_model,
             document_hashes=document_hashes,
+            expected_seed=client.seed,
         )
         return instance
 
@@ -177,6 +184,7 @@ class HybridIndex:
             chunks_bytes=raw_chunks,
             embedding_model=client.embedding_model,
             document_hashes=document_hashes,
+            expected_seed=client.seed,
         )
         return instance
 
@@ -229,7 +237,9 @@ def _fragment_from_record(record: object) -> Fragment:
     if not text:
         raise ValueError("фрагмент индекса не содержит text")
     return Fragment(
-        source=str(record.get("source") or record.get("source_path") or ""),
+        source=str(
+            record.get("document") or record.get("source") or record.get("source_path") or ""
+        ),
         section=str(record.get("section") or record.get("section_number") or ""),
         text=text,
         dates=tuple(str(item) for item in record.get("dates", [])),
@@ -244,7 +254,8 @@ def _validate_bundle(
     fragments: list[Fragment],
     chunks_bytes: bytes,
     embedding_model: str,
-    document_hashes: dict[str, str],
+    document_hashes: dict[str, DocumentHashes],
+    expected_seed: int,
 ) -> None:
     """Отклоняет индекс, который не соответствует текстам или ZIP корпуса."""
     expected_count = int(manifest.get("chunk_count", manifest.get("chunks_count", len(fragments))))
@@ -261,28 +272,40 @@ def _validate_bundle(
         raise ValueError(
             f"модель индекса {expected_model!r} не совпадает с EMB_MODEL {embedding_model!r}"
         )
+    expected_documents_count = manifest.get("documents_count")
+    if expected_documents_count is not None and int(expected_documents_count) != len(document_hashes):
+        raise ValueError(
+            f"число документов {len(document_hashes)} не совпадает с manifest "
+            f"{expected_documents_count}"
+        )
+    if manifest.get("normalized") is False:
+        raise ValueError("индекс manifest не нормализован для cosine/IP поиска")
+    manifest_seed = manifest.get("seed")
+    if manifest_seed is not None and int(manifest_seed) != expected_seed:
+        raise ValueError(f"seed индекса {manifest_seed} не совпадает с runtime seed {expected_seed}")
 
     checks = {
         "chunks_sha256": hashlib.sha256(chunks_bytes).hexdigest(),
         "corpus_sha256": _fragments_sha256(fragments),
     }
-    declared = 0
     for name, actual in checks.items():
         expected = manifest.get(name)
         if expected is None:
             continue
-        declared += 1
         if str(expected).lower() != actual:
             raise ValueError(f"контрольная сумма {name} не совпадает")
-    if declared == 0:
-        raise ValueError("manifest не содержит SHA-256 для проверки фрагментов")
     expected_documents = _manifest_document_hashes(manifest)
     if set(expected_documents) != set(document_hashes):
         missing = sorted(set(document_hashes) - set(expected_documents))
         extra = sorted(set(expected_documents) - set(document_hashes))
         raise ValueError(f"manifest не соответствует документам ZIP: missing={missing}, extra={extra}")
     for name, actual in document_hashes.items():
-        if expected_documents[name].lower() != actual:
+        expected = expected_documents[name]
+        raw_matches = bool(expected.raw_sha256) and expected.raw_sha256.lower() == actual.raw_sha256
+        text_matches = (
+            bool(expected.text_sha256) and expected.text_sha256.lower() == actual.text_sha256
+        )
+        if not raw_matches and not text_matches:
             raise ValueError(f"SHA-256 документа не совпадает: {name}")
     referenced_documents = {item.source for item in fragments}
     if "" in referenced_documents or not referenced_documents <= set(document_hashes):
@@ -290,22 +313,28 @@ def _validate_bundle(
         raise ValueError(f"chunks.json ссылается на неизвестные документы: {unknown}")
 
 
-def _manifest_document_hashes(manifest: dict) -> dict[str, str]:
+def _manifest_document_hashes(manifest: dict) -> dict[str, DocumentHashes]:
     payload = manifest.get("documents", manifest.get("document_sha256"))
-    result: dict[str, str] = {}
+    result: dict[str, DocumentHashes] = {}
     if isinstance(payload, dict):
         for name, value in payload.items():
-            digest = value.get("sha256") if isinstance(value, dict) else value
-            if digest:
-                result[str(name)] = str(digest)
+            if isinstance(value, dict):
+                raw_digest = value.get("raw_sha256") or value.get("sha256") or ""
+                text_digest = value.get("text_sha256") or ""
+            else:
+                raw_digest = value
+                text_digest = ""
+            if raw_digest or text_digest:
+                result[str(name)] = DocumentHashes(str(raw_digest), str(text_digest))
     elif isinstance(payload, list):
         for item in payload:
             if not isinstance(item, dict):
                 continue
             name = item.get("path") or item.get("name") or item.get("source")
-            digest = item.get("sha256") or item.get("hash")
-            if name and digest:
-                result[str(name)] = str(digest)
+            raw_digest = item.get("raw_sha256") or item.get("sha256") or item.get("hash") or ""
+            text_digest = item.get("text_sha256") or ""
+            if name and (raw_digest or text_digest):
+                result[str(name)] = DocumentHashes(str(raw_digest), str(text_digest))
     if not result:
         raise ValueError("manifest не содержит SHA-256 всех документов")
     for name in result:
@@ -313,15 +342,23 @@ def _manifest_document_hashes(manifest: dict) -> dict[str, str]:
     return result
 
 
-def _hash_archive_documents(path: Path) -> dict[str, str]:
+def _hash_archive_documents(path: Path) -> dict[str, DocumentHashes]:
     with zipfile.ZipFile(path) as archive:
         for name in archive.namelist():
             _validate_member_name(name)
         return {
-            name: hashlib.sha256(archive.read(name)).hexdigest()
+            name: _document_hashes(archive.read(name))
             for name in sorted(archive.namelist())
             if not name.endswith("/")
         }
+
+
+def _document_hashes(raw: bytes) -> DocumentHashes:
+    text = _decode(raw).replace("\r\n", "\n").replace("\r", "\n")
+    return DocumentHashes(
+        raw_sha256=hashlib.sha256(raw).hexdigest(),
+        text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    )
 
 
 def _validate_member_name(name: str) -> None:
