@@ -11,6 +11,7 @@ from pathlib import Path
 import zipfile
 
 FLATTENED_MODULES: tuple[str, ...] = (
+    "core/reproducibility.py",
     "submission/solution.py",
     "submission/model_client.py",
     "submission/search.py",

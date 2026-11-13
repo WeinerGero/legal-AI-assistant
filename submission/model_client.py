@@ -9,6 +9,11 @@ from pathlib import Path
 
 import httpx
 
+try:
+    from core.reproducibility import DEFAULT_SEED
+except ImportError:  # плоский корень submission.zip
+    from reproducibility import DEFAULT_SEED
+
 
 def _load_local_settings() -> dict[str, str]:
     """Читает только нужные имена из локального .env, не выводя значения."""
@@ -36,7 +41,7 @@ def _load_local_settings() -> dict[str, str]:
 
 
 class ModelClient:
-    def __init__(self, *, timeout: float = 90.0) -> None:
+    def __init__(self, *, timeout: float = 90.0, seed: int = DEFAULT_SEED) -> None:
         local = _load_local_settings()
         def get(name: str, default: str = "") -> str:
             return os.getenv(name) or local.get(name, default)
@@ -57,6 +62,7 @@ class ModelClient:
         self.embedding_model = get("EMB_MODEL", "BAAI/bge-m3")
         self.reranker_model = get("RERANKER_MODEL")
         self.timeout = timeout
+        self.seed = seed
 
     def _request(self, endpoint: str, payload: dict) -> dict:
         if not self.base_url or not self.api_key:
@@ -78,6 +84,7 @@ class ModelClient:
             {
                 "model": self.llm_model,
                 "temperature": 0,
+                "seed": self.seed,
                 "response_format": {"type": "json_object"},
                 "messages": [
                     {"role": "system", "content": system_prompt},
