@@ -1,0 +1,256 @@
+{
+  "scope": {
+    "baseline_is_runtime_default": true,
+    "candidate_connected_to_runtime": false,
+    "real_api_executed": false,
+    "real_api_reason": "Not executed: no proxy URL/key were exported to the process; .env was not read."
+  },
+  "prompt_hashes": {
+    "baseline": {
+      "analysis": "73a674c1cdbeacd84876a3d7d24bb9d692b34260ac258222df2a11bbfea6aa6b",
+      "generation": "7a15d7ba9ee00a2a8673be25b69f9eb7b8579dac8f2e99c2fc5405c7e4829442",
+      "verification": "d19068b4741fb6d81232c7a0f984a8ed3f1cb6696f86f3de989693e0970947c5"
+    },
+    "candidate": {
+      "analysis": "ffda23448d94db7269335caeaf4c77d3ffcf6f980a1c1f044d33db3164205a25",
+      "generation": "18e580484ed360c5ab9aab552c40e93f8ad059d2bbfc5db3dc4780aa97780f10",
+      "verification": "8d97a9444207d923ef5dbbcc70b7be61c3e512d9e106ad167625f63feee2ef5c",
+      "reranker_instruction": "8bdb22c8737ed24edff43edce39d3da6bcecee0d3887487a3df8124a16b4fc4f"
+    }
+  },
+  "prompt_design_comparison": {
+    "analysis": [
+      "separate role and evidence boundary",
+      "atomic requested_facts",
+      "explicit event-date and version preservation",
+      "strict existing JSON field set"
+    ],
+    "generation": [
+      "one independently verifiable assertion per claim",
+      "answer-to-claims coverage rule",
+      "version/date/identifier checks",
+      "existing answer_type and claims schema retained"
+    ],
+    "verification": [
+      "content, revision, date, identifier and completeness checks separated",
+      "citation existence is not sufficient",
+      "evidence_ids must remain identical",
+      "every claim checked exactly once with a nonempty reason",
+      "existing verdict and status values retained"
+    ]
+  },
+  "api_capability_status": {
+    "current_proxy_contract": {
+      "chat_completions_fields": [
+        "model",
+        "temperature",
+        "max_tokens",
+        "messages"
+      ],
+      "rerank_fields": [
+        "model",
+        "query",
+        "documents",
+        "top_n"
+      ]
+    },
+    "response_format_json_object": "N/A: documented by DeepSeek upstream, not tested on organizer proxy",
+    "thinking": "N/A: documented by DeepSeek upstream, not tested on organizer proxy",
+    "reasoning_effort": "N/A: documented by DeepSeek upstream, not tested on organizer proxy",
+    "rerank_instruction_field": "N/A: not present in the confirmed organizer request example; not sent",
+    "defaults_changed": false
+  },
+  "documentation_sources": {
+    "deepseek_json_output": "https://api-docs.deepseek.com/guides/json_mode/",
+    "deepseek_thinking_mode": "https://api-docs.deepseek.com/guides/thinking_mode/",
+    "deepseek_chat_completions": "https://api-docs.deepseek.com/api/create-chat-completion/",
+    "qwen3_reranker_model_card": "https://huggingface.co/Qwen/Qwen3-Reranker-8B",
+    "scope_note": "Upstream documentation does not establish organizer-proxy compatibility."
+  },
+  "reranker_variants": [
+    {
+      "name": "baseline_semantic_query_text_only",
+      "query": "analysis semantic query",
+      "document": "chunk text",
+      "uses_only_confirmed_fields": true
+    },
+    {
+      "name": "original_query_with_metadata_prefix",
+      "query": "original user query",
+      "document": "[document=<id>] [section=<id>] [date=<date>] chunk text",
+      "uses_only_confirmed_fields": true
+    },
+    {
+      "name": "analysis_query_with_metadata_prefix",
+      "query": "analysis semantic query",
+      "document": "[document=<id>] [section=<id>] [date=<date>] chunk text",
+      "uses_only_confirmed_fields": true
+    },
+    {
+      "name": "instruction_prefixed_analysis_query",
+      "query": "<candidate instruction>\n<analysis semantic query>",
+      "document": "[document=<id>] [section=<id>] [date=<date>] chunk text",
+      "uses_only_confirmed_fields": true,
+      "note": "Instruction is query text, not an unconfirmed API parameter."
+    }
+  ],
+  "real_measurements": {
+    "retrieval_query_source": "original",
+    "local_bm25_document": {
+      "question_denominator": 17,
+      "label_denominator": 17,
+      "aggregation": "macro average over labeled questions",
+      "@8": {
+        "recall": 1.0,
+        "mrr": 0.80203081232493,
+        "ndcg": 0.8465798943800956
+      },
+      "@24": {
+        "recall": 1.0,
+        "mrr": 0.80203081232493,
+        "ndcg": 0.8465798943800956
+      }
+    },
+    "local_bm25_section": {
+      "question_denominator": 16,
+      "label_denominator": 21,
+      "aggregation": "macro average over labeled questions",
+      "@8": {
+        "recall": 0.5625,
+        "mrr": 0.4174107142857143,
+        "ndcg": 0.4166342646141134
+      },
+      "@24": {
+        "recall": 0.78125,
+        "mrr": 0.43116544913419913,
+        "ndcg": 0.475681641372779
+      }
+    },
+    "candidate_reranker_recall@8": null,
+    "candidate_reranker_ndcg@8": null,
+    "claim_correctness": null,
+    "fact_completeness": null,
+    "verification_errors": null,
+    "refusals": null,
+    "p50_ms": null,
+    "p95_ms": null,
+    "api_calls": null,
+    "na_reason": "No matched live or replayed model responses for baseline and candidate prompts."
+  },
+  "variant_comparison": [
+    {
+      "metric": "reranker_recall@8",
+      "baseline": null,
+      "candidate": null,
+      "change": null,
+      "reason": "N/A: no matched live or replayed responses under both prompt variants"
+    },
+    {
+      "metric": "reranker_ndcg@8",
+      "baseline": null,
+      "candidate": null,
+      "change": null,
+      "reason": "N/A: no matched live or replayed responses under both prompt variants"
+    },
+    {
+      "metric": "claim_correctness",
+      "baseline": null,
+      "candidate": null,
+      "change": null,
+      "reason": "N/A: no matched live or replayed responses under both prompt variants"
+    },
+    {
+      "metric": "fact_completeness",
+      "baseline": null,
+      "candidate": null,
+      "change": null,
+      "reason": "N/A: no matched live or replayed responses under both prompt variants"
+    },
+    {
+      "metric": "verification_error_rate",
+      "baseline": null,
+      "candidate": null,
+      "change": null,
+      "reason": "N/A: no matched live or replayed responses under both prompt variants"
+    },
+    {
+      "metric": "refusal_rate",
+      "baseline": null,
+      "candidate": null,
+      "change": null,
+      "reason": "N/A: no matched live or replayed responses under both prompt variants"
+    },
+    {
+      "metric": "p50_ms",
+      "baseline": null,
+      "candidate": null,
+      "change": null,
+      "reason": "N/A: no matched live or replayed responses under both prompt variants"
+    },
+    {
+      "metric": "p95_ms",
+      "baseline": null,
+      "candidate": null,
+      "change": null,
+      "reason": "N/A: no matched live or replayed responses under both prompt variants"
+    },
+    {
+      "metric": "api_calls",
+      "baseline": null,
+      "candidate": null,
+      "change": null,
+      "reason": "N/A: no matched live or replayed responses under both prompt variants"
+    }
+  ],
+  "simulated_contract_checks": {
+    "role": "Parser/schema fixtures only; not LLM quality measurements.",
+    "passed": 5,
+    "total": 5,
+    "cases": [
+      {
+        "id": "supported_answer",
+        "passed": true,
+        "verdict": "pass",
+        "statuses": [
+          "supported"
+        ],
+        "parser_error": null
+      },
+      {
+        "id": "wrong_revision",
+        "passed": true,
+        "verdict": "revision_required",
+        "statuses": [
+          "contradicted"
+        ],
+        "parser_error": null
+      },
+      {
+        "id": "partial_support",
+        "passed": true,
+        "verdict": "revision_required",
+        "statuses": [
+          "partially_supported"
+        ],
+        "parser_error": null
+      },
+      {
+        "id": "false_citation",
+        "passed": true,
+        "verdict": "revision_required",
+        "statuses": [
+          "unsupported"
+        ],
+        "parser_error": null
+      },
+      {
+        "id": "justified_refusal",
+        "passed": true,
+        "verdict": "pass",
+        "statuses": [],
+        "parser_error": null
+      }
+    ]
+  },
+  "decision": "Keep v2 prompts and current reranker payload as runtime defaults until matched real or replayed measurements show improvement."
+}
