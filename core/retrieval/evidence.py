@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
 from uuid import UUID
 
 from core.contracts import ChunkRef, DocumentRef, DocumentRepository, Evidence
@@ -71,7 +71,9 @@ class EvidenceDraft:
     start_char: int
     end_char: int
     applicability_note: str | None = None
-    metadata_review_status: str = "unknown"
+    metadata_review_status: Literal["verified", "pending", "conflict", "unknown"] = (
+        "unknown"
+    )
 
 
 @dataclass(slots=True)
@@ -128,7 +130,9 @@ def needs_neighbor(text: str) -> bool:
     return any(marker in lowered for marker in NEIGHBOR_MARKERS)
 
 
-def covered_facts(records: Sequence[Evidence], requested_facts: Sequence[str]) -> list[str]:
+def covered_facts(
+    records: Sequence[Evidence], requested_facts: Sequence[str]
+) -> list[str]:
     """Определяет, какие запрошенные факты подтверждаются текстом доказательств.
 
     Проверка лексическая и намеренно консервативная: совпадение основ
@@ -205,8 +209,12 @@ def build_evidence(
             document_version_id=draft.chunk.document_version_id,
             clause_id=_primary_clause(draft.chunk),
             document_title=draft.document.title,
+            version_label=draft.document.version_label,
+            source_path=draft.document.source_path,
             section=draft.section,
             text=draft.text,
+            start_char=draft.start_char,
+            end_char=draft.end_char,
             applicability_note=draft.applicability_note,
             metadata_review_status=draft.metadata_review_status,
         )
@@ -245,25 +253,22 @@ def _explode_chunk(
                 metadata_review_status=document.metadata_review_status,
             )
         ]
-    width = chunk.end_char - chunk.start_char
-    parts: list[EvidenceDraft] = []
-    for offset in range(len(clauses)):
-        start = chunk.start_char + width * offset // len(clauses)
-        end = chunk.start_char + width * (offset + 1) // len(clauses)
-        parts.append(
-            EvidenceDraft(
-                chunk=chunk,
-                document=document,
-                text=document.canonical_text[start:end],
-                section=_section_label(document, start),
-                reason=reason,
-                start_char=start,
-                end_char=end,
-                applicability_note=note,
-                metadata_review_status=document.metadata_review_status,
-            )
+    # ``ChunkRef`` пока не содержит координат каждого clause. Делить диапазон
+    # арифметически нельзя: это создаёт ложные юридические цитаты. Сохраняем
+    # один честный диапазон всего chunk и помечаем его собственным chunk_id.
+    return [
+        EvidenceDraft(
+            chunk=chunk,
+            document=document,
+            text=_slice(document, chunk),
+            section=_section_label(document, chunk.start_char),
+            reason=reason,
+            start_char=chunk.start_char,
+            end_char=chunk.end_char,
+            applicability_note=note,
+            metadata_review_status=document.metadata_review_status,
         )
-    return parts
+    ]
 
 
 def _slice(document: DocumentRef, chunk: ChunkRef) -> str:
@@ -286,7 +291,7 @@ def _section_label(document: DocumentRef, position: int) -> str:
 
 def _primary_clause(chunk: ChunkRef) -> UUID:
     """Основное положение диапазона; фрагмент без связей получает свой id."""
-    if chunk.clause_ids:
+    if len(chunk.clause_ids) == 1:
         return chunk.clause_ids[0]
     return chunk.chunk_id
 

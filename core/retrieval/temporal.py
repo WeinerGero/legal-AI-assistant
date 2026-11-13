@@ -54,7 +54,11 @@ def evaluate_condition(
         return "false"
     if condition.not_ is not None:
         inner = _evaluate_predicate(condition.not_, facts)
-        return {"true": "false", "false": "true", "unknown": "unknown"}[inner]
+        if inner == "true":
+            return "false"
+        if inner == "false":
+            return "true"
+        return "unknown"
     return "unknown"
 
 

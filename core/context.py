@@ -50,13 +50,19 @@ def merge_context(base: DialogContext, patch: dict[str, str] | None) -> DialogCo
     if event_date is not None:
         merged.event_date = event_date
     document_kind = patch.get("active_document_kind")
-    document_number = patch.get("active_document_number")
+    document_number = patch.get("contract_number") or patch.get(
+        "active_document_number"
+    )
+    counterparty = patch.get("counterparty")
     document_date = _coerce_date(patch.get("active_document_date"))
-    if document_kind or document_number or document_date:
+    if document_kind or document_number or counterparty or document_date:
         merged.active_document = {
             "kind": document_kind or _current(merged, "kind"),
-            "number": document_number or _current(merged, "number"),
-            "date": document_date.isoformat() if document_date else _current(merged, "date"),
+            "contract_number": document_number or _current(merged, "contract_number"),
+            "counterparty": counterparty or _current(merged, "counterparty"),
+            "date": document_date.isoformat()
+            if document_date
+            else _current(merged, "date"),
         }
     return merged
 

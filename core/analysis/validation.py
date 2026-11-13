@@ -94,14 +94,18 @@ def normalize_entities(
         entity = entities.get(key)
         if entity is not None and not is_empty_value(entity.value):
             assert entity.value is not None
-            normalized[key] = entity.model_copy(update={"value": " ".join(entity.value.split())})
+            normalized[key] = entity.model_copy(
+                update={"value": " ".join(entity.value.split())}
+            )
             continue
 
         fallback = active_document.get(key)
         if key in active_document and not is_empty_value(fallback):
             normalized[key] = EntityValue(value=fallback, origin="dialog_context")
         elif entity is not None:
-            normalized[key] = EntityValue(value=None, origin="unknown", verification="unknown")
+            normalized[key] = EntityValue(
+                value=None, origin="unknown", verification="unknown"
+            )
 
     for key, entity in entities.items():
         if key not in normalized:
@@ -109,7 +113,9 @@ def normalize_entities(
     return normalized
 
 
-def contradicts_context(dialog_context: DialogContext, result: AnalysisResultV1) -> bool:
+def contradicts_context(
+    dialog_context: DialogContext, result: AnalysisResultV1
+) -> bool:
     """Явное противоречие между репликой и уже известным контекстом.
 
     Новый названный договор законно заменяет прежний (§6.1), поэтому сам
@@ -134,7 +140,9 @@ def contradicts_context(dialog_context: DialogContext, result: AnalysisResultV1)
     return not result.requires_clarification and not result.ambiguities
 
 
-def trim_history(messages: list[ChatMessage], limit: int = MAX_RECENT_MESSAGES) -> list[ChatMessage]:
+def trim_history(
+    messages: list[ChatMessage], limit: int = MAX_RECENT_MESSAGES
+) -> list[ChatMessage]:
     """Оставляет последние ``limit`` сообщений, порядок сохраняется."""
     if limit <= 0:
         return []

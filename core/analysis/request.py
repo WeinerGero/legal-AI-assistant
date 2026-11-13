@@ -30,7 +30,6 @@ from core.contracts import (
     AnalysisResultV1,
     ChatMessage,
     ChunkRef,
-    ContextRepository,
     DialogContext,
     DocumentRepository,
     EntityValue,
@@ -76,7 +75,9 @@ def analyze(
     request: AnalysisRequestV1,
 ) -> AnalysisResultV1:
     """Вызов модели и полная обработка ответа: проверки §6.4 и сверка с корпусом."""
-    payload = llm.complete_json(load_prompt(ANALYSIS_PROMPT_ID), request.model_dump_json())
+    payload = llm.complete_json(
+        load_prompt(ANALYSIS_PROMPT_ID), request.model_dump_json()
+    )
     result = AnalysisResultV1.model_validate_json(payload)
     return finalize(
         result,

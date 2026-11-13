@@ -27,13 +27,28 @@ def build_verification_request(
     )
 
 
-def is_pass(result: VerificationResultV1) -> bool:
+def is_pass(
+    result: VerificationResultV1, generation: GenerationResultV1 | None = None
+) -> bool:
     """``pass`` только при полной поддержке всех утверждений (§9.5)."""
     if result.verdict != "pass":
         return False
     if result.missing_requested_facts:
         return False
-    return all(check.status == "supported" for check in result.claim_checks)
+    checks = result.claim_checks
+    if generation is not None:
+        expected = {
+            segment.claim_id
+            for block in generation.blocks
+            for segment in block.segments
+            if segment.claim_type in {"legal_fact", "legal_inference", "qualification"}
+        }
+        actual = [check.claim_id for check in checks]
+        if len(actual) != len(set(actual)) or set(actual) != expected:
+            return False
+        if not expected:
+            return not actual
+    return bool(checks) and all(check.status == "supported" for check in checks)
 
 
 def summarize(result: VerificationResultV1) -> dict[str, int]:

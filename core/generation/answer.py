@@ -16,6 +16,7 @@ from core.contracts import (
     GenerationRequestV1,
     GenerationResultV1,
     MandatoryPart,
+    RequestPurpose,
     RetrievalAuditV1,
     Segment,
     TemporalContext,
@@ -30,7 +31,7 @@ def build_generation_request(
     *,
     event_date: date | None = None,
     applicability_unknown: bool = False,
-    request_purpose: str | None = None,
+    request_purpose: RequestPurpose | None = None,
     retrieval_audit: RetrievalAuditV1 | None = None,
     mandatory_parts: list[MandatoryPart] | None = None,
 ) -> GenerationRequestV1:

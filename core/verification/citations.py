@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 from core.contracts import (
@@ -26,7 +27,7 @@ def build_rendered_answer(
     generation: GenerationResultV1,
     registry: dict[str, Evidence],
     evidence_source_ids: dict[str, str],
-    verification_status: str,
+    verification_status: Literal["passed", "partial", "failed", "technical_error"],
 ) -> RenderedAnswerV1:
     """Формирует ``RenderedAnswerV1`` без смысловых преобразований текста."""
     numbers: dict[str, int] = {}
@@ -49,7 +50,7 @@ def build_rendered_answer(
                         answer_source_id=source_id,
                         number=number,
                         document_title=record.document_title,
-                        version_label=record.section,
+                        version_label=record.version_label,
                         section_number=record.section,
                     )
             segments.append(
@@ -67,9 +68,14 @@ def build_rendered_answer(
         verification_status=verification_status,
         blocks=blocks,
         sources=sorted(sources.values(), key=lambda item: item.number),
+        missing_information=generation.missing_information,
+        false_premises=generation.false_premises,
+        clarification_question=generation.clarification_question,
     )
 
 
-def source_chain_is_owned(answer_id: UUID, owner_user_id: UUID, answer_owner: UUID) -> bool:
+def source_chain_is_owned(
+    answer_id: UUID, owner_user_id: UUID, answer_owner: UUID
+) -> bool:
     """Цепочка ``answer_source → answer → message → conversation → owner`` (§2.3)."""
     return owner_user_id == answer_owner

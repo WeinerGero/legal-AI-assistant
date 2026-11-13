@@ -13,7 +13,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from core.contracts import ChunkRef, DocumentRepository, EmbeddingProvider, LexicalSearch, VectorSearch
+from core.contracts import (
+    ChunkRef,
+    DocumentRepository,
+    EmbeddingProvider,
+    LexicalSearch,
+    VectorSearch,
+)
 from core.fusion import merge_within_channel, reciprocal_rank_fusion
 
 
@@ -36,13 +42,15 @@ class HybridRetriever:
         embeddings: EmbeddingProvider,
         *,
         top_k: int = 30,
+        top_k_vector: int | None = None,
         rrf_k: int = 60,
     ) -> None:
         self._documents = documents
         self._lexical = lexical
         self._vectors = vectors
         self._embeddings = embeddings
-        self._top_k = top_k
+        self._top_k_lexical = top_k
+        self._top_k_vector = top_k if top_k_vector is None else top_k_vector
         self._rrf_k = rrf_k
 
     def search(
@@ -67,14 +75,21 @@ class HybridRetriever:
         lexical = _non_blank(lexical_queries)
         semantic = _non_blank(semantic_queries)
 
-        lexical_lists = [self._lexical.search(generation_id, q, self._top_k) for q in lexical]
+        lexical_lists = [
+            self._lexical.search(generation_id, q, self._top_k_lexical) for q in lexical
+        ]
         semantic_lists: list[list[tuple[UUID, float]]] = []
-        for query in semantic:
-            vectors = self._embeddings.embed([query])
-            if not vectors:
-                raise ValueError(f"провайдер эмбеддингов вернул пустой результат: {query!r}")
+        vectors = self._embeddings.embed(semantic) if semantic else []
+        if len(vectors) != len(semantic):
+            raise ValueError("число эмбеддингов не совпадает с числом запросов")
+        for query, vector in zip(semantic, vectors, strict=True):
+            if len(vector) != self._embeddings.dimension:
+                raise ValueError(
+                    f"неверная размерность эмбеддинга для {query!r}: "
+                    f"{len(vector)} вместо {self._embeddings.dimension}"
+                )
             semantic_lists.append(
-                list(self._vectors.search(generation_id, vectors[0], self._top_k))
+                list(self._vectors.search(generation_id, vector, self._top_k_vector))
             )
 
         ranked = reciprocal_rank_fusion(
@@ -90,4 +105,3 @@ class HybridRetriever:
 def _non_blank(queries: list[str]) -> list[str]:
     """Отбрасывает пустые формулировки, сохраняя порядок и дубликаты."""
     return [query for query in queries if query.strip()]
-

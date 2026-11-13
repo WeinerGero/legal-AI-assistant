@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from core.contracts import Evidence, GenerationResultV1
+from core.contracts import Evidence, GenerationResultV1, VerificationResultV1
 
 
 @dataclass(slots=True)
@@ -56,7 +56,9 @@ def check_result(
                             f"{segment.claim_id}: неизвестный evidence_id {evidence_id}"
                         )
 
-    total_chars = sum(len(segment.text) for block in result.blocks for segment in block.segments)
+    total_chars = sum(
+        len(segment.text) for block in result.blocks for segment in block.segments
+    )
     if total_chars > max_answer_chars:
         report.errors.append(f"итоговый текст длиннее {max_answer_chars} символов")
 
@@ -71,4 +73,33 @@ def check_evidence_integrity(registry: dict[str, Evidence]) -> ProgrammaticRepor
             report.errors.append(f"несоответствие ключа реестра: {evidence_id}")
         if not record.text:
             report.errors.append(f"{evidence_id}: пустой текст основания")
+        if record.start_char is not None and record.end_char is not None:
+            if record.end_char <= record.start_char:
+                report.errors.append(f"{evidence_id}: неверный диапазон источника")
+    return report
+
+
+def check_verification_coverage(
+    generation: GenerationResultV1, verification: VerificationResultV1
+) -> ProgrammaticReport:
+    """Проверяет, что модель №3 оценила каждое юридическое утверждение ровно один раз."""
+    report = ProgrammaticReport()
+    expected = {
+        segment.claim_id
+        for block in generation.blocks
+        for segment in block.segments
+        if segment.claim_type in {"legal_fact", "legal_inference", "qualification"}
+    }
+    actual = [check.claim_id for check in verification.claim_checks]
+    duplicates = sorted({claim_id for claim_id in actual if actual.count(claim_id) > 1})
+    missing = sorted(expected - set(actual))
+    unknown = sorted(set(actual) - expected)
+    for claim_id in duplicates:
+        report.errors.append(f"повторная проверка claim_id: {claim_id}")
+    for claim_id in missing:
+        report.errors.append(f"не проверен claim_id: {claim_id}")
+    for claim_id in unknown:
+        report.errors.append(f"проверен неизвестный claim_id: {claim_id}")
+    if expected and not actual:
+        report.errors.append("модель проверки вернула пустой claim_checks")
     return report

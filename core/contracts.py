@@ -31,11 +31,17 @@ Intent = Literal[
     "out_of_scope",
 ]
 AnalysisStatus = Literal["ready", "needs_clarification", "out_of_scope"]
-RequestPurpose = Literal["legal_information", "prohibited_assistance", "nonlegal", "uncertain"]
-ValueOrigin = Literal["current_message", "dialog_context", "history", "inferred", "unknown"]
+RequestPurpose = Literal[
+    "legal_information", "prohibited_assistance", "nonlegal", "uncertain"
+]
+ValueOrigin = Literal[
+    "current_message", "dialog_context", "history", "inferred", "unknown"
+]
 ValueVerification = Literal["mentioned", "resolved", "verified_in_corpus", "unknown"]
 ClaimType = Literal["legal_fact", "legal_inference", "qualification", "non_factual"]
-BlockType = Literal["conclusion", "justification", "qualification", "clarification", "refusal"]
+BlockType = Literal[
+    "conclusion", "justification", "qualification", "clarification", "refusal"
+]
 LegalStatus = Literal[
     "answered",
     "partial",
@@ -57,7 +63,9 @@ MissingInformationKind = Literal[
     "unknown_user_parameter",
     "unknown_applicability",
 ]
-VerificationState = Literal["supported", "partially_supported", "unsupported", "contradicted"]
+VerificationState = Literal[
+    "supported", "partially_supported", "unsupported", "contradicted"
+]
 RequiredAction = Literal[
     "none",
     "revise_claim",
@@ -72,7 +80,9 @@ Verdict = Literal[
     "clarification_required",
     "insufficient_evidence",
 ]
-TechnicalErrorCode = Literal["model_unavailable", "timeout", "invalid_model_output", "internal_error"]
+TechnicalErrorCode = Literal[
+    "model_unavailable", "timeout", "invalid_model_output", "internal_error"
+]
 RelationType = Literal["amends", "supersedes", "clarifies", "exception_to", "annex_to"]
 JobType = Literal["answer", "index"]
 JobStatus = Literal["pending", "running", "completed", "failed"]
@@ -158,10 +168,16 @@ class Evidence(BaseModel):
     document_version_id: UUID
     clause_id: UUID
     document_title: str
+    version_label: str = ""
+    source_path: str = ""
     section: str
     text: str
+    start_char: int | None = Field(default=None, ge=0)
+    end_char: int | None = Field(default=None, ge=0)
     applicability_note: str | None = None
-    metadata_review_status: Literal["verified", "pending", "conflict", "unknown"] = "unknown"
+    metadata_review_status: Literal["verified", "pending", "conflict", "unknown"] = (
+        "unknown"
+    )
 
 
 class ApplicabilityPredicate(BaseModel):
@@ -184,7 +200,6 @@ class ApplicabilityCondition(BaseModel):
     all: list[ApplicabilityPredicate] | None = None
     any: list[ApplicabilityPredicate] | None = None
     not_: ApplicabilityPredicate | None = Field(default=None, alias="not")
-
 
 
 class TemporalContext(BaseModel):
@@ -222,7 +237,9 @@ class ApplicabilityDecisionV1(BaseModel):
     reason_code: str
     condition_source_ids: list[UUID] = Field(default_factory=list)
     missing_fields: list[str] = Field(default_factory=list)
-    metadata_review_status: Literal["verified", "pending", "conflict", "unknown"] = "unknown"
+    metadata_review_status: Literal["verified", "pending", "conflict", "unknown"] = (
+        "unknown"
+    )
 
 
 class FactAudit(BaseModel):
@@ -438,6 +455,10 @@ class RenderedAnswerV1(BaseModel):
     verification_status: Literal["passed", "partial", "failed", "technical_error"]
     blocks: list[RenderedBlock] = Field(default_factory=list)
     sources: list[RenderedSource] = Field(default_factory=list)
+    missing_information: list[MissingInformationItem] = Field(default_factory=list)
+    false_premises: list[FalsePremise] = Field(default_factory=list)
+    clarification_question: str | None = None
+    retrieval_audit: RetrievalAuditV1 | None = None
 
 
 class TechnicalFailure(BaseModel):
@@ -465,7 +486,9 @@ class DocumentRef(BaseModel):
     canonical_text: str
     effective_from: date | None = None
     effective_to: date | None = None
-    metadata_review_status: Literal["verified", "pending", "conflict", "unknown"] = "unknown"
+    metadata_review_status: Literal["verified", "pending", "conflict", "unknown"] = (
+        "unknown"
+    )
 
 
 class ChunkRef(BaseModel):
@@ -503,21 +526,27 @@ class ContextRepository(Protocol):
 
     def load_context(self, conversation_id: UUID) -> DialogContext: ...
 
-    def load_recent_messages(self, conversation_id: UUID, limit: int) -> Sequence[ChatMessage]: ...
+    def load_recent_messages(
+        self, conversation_id: UUID, limit: int
+    ) -> Sequence[ChatMessage]: ...
 
 
 @runtime_checkable
 class LexicalSearch(Protocol):
     """BM25-канал над снимком поколения индекса."""
 
-    def search(self, generation_id: UUID, query: str, top_k: int) -> Sequence[tuple[UUID, float]]: ...
+    def search(
+        self, generation_id: UUID, query: str, top_k: int
+    ) -> Sequence[tuple[UUID, float]]: ...
 
 
 @runtime_checkable
 class VectorSearch(Protocol):
     """Векторный канал: pgvector или FAISS ``IndexFlatIP``."""
 
-    def search(self, generation_id: UUID, embedding: Sequence[float], top_k: int) -> Sequence[tuple[UUID, float]]: ...
+    def search(
+        self, generation_id: UUID, embedding: Sequence[float], top_k: int
+    ) -> Sequence[tuple[UUID, float]]: ...
 
 
 @runtime_checkable
@@ -555,7 +584,13 @@ class AnswerRepository(Protocol):
 class CitationResolver(Protocol):
     """``evidence_id`` → постоянный ``answer_source_id`` (ARCHITECTURE.md §10.1)."""
 
-    def resolve(self, answer_id: UUID, claims: Sequence[tuple[str, Sequence[str]]]) -> RenderedAnswerV1: ...
+    def resolve(
+        self,
+        answer_id: UUID,
+        generation: GenerationResultV1,
+        registry: dict[str, Evidence],
+        verification_status: Literal["passed", "partial", "failed", "technical_error"],
+    ) -> RenderedAnswerV1: ...
 
 
 class PipelineRunMetadata(BaseModel):
