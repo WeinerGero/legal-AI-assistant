@@ -44,18 +44,12 @@ class RuntimeConfig:
     def from_env(cls) -> "RuntimeConfig":
         return cls(
             data_dir=Path(os.environ.get("DATA_DIR", ".")),
-            top_k=int(os.environ.get("TOP_K", "30")),
-            reranker_top_n=int(os.environ.get("RERANKER_TOP_N", "10")),
-            temperature=float(os.environ.get("TEMPERATURE", "0.0")),
-            max_tokens=int(os.environ.get("MAX_TOKENS", "1500")),
-            max_workers=int(os.environ.get("MAX_WORKERS", "4")),
-            seed=int(os.environ.get("SEED", str(DEFAULT_SEED))),
         )
 
 
 def read_questions(path: Path) -> list[tuple[str, str]]:
     """Читает ``questions.csv``; каждая строка обрабатывается изолированно."""
-    with path.open(encoding="utf-8", newline="") as handle:
+    with path.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         if reader.fieldnames != ["id", "question"]:
             raise ValueError("questions.csv должен содержать ровно колонки id,question")
@@ -107,7 +101,9 @@ def main(argv: list[str] | None = None) -> int:
     questions = read_questions(questions_path)
     client = ModelClient(seed=config.seed)
     index_dir = Path(os.environ.get("INDEX_DIR", config.data_dir / "index" / "bge_m3"))
-    if (index_dir / "index.faiss").is_file():
+    if HybridIndex.archive_has_prebuilt(knowledge_path):
+        index = HybridIndex.from_archive(knowledge_path, client)
+    elif (index_dir / "index.faiss").is_file():
         index = HybridIndex.from_prebuilt(index_dir, knowledge_path, client)
     else:
         index = HybridIndex(load_fragments(knowledge_path), client)

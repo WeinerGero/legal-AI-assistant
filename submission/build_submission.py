@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 import zipfile
 
+FIXED_ZIP_TIMESTAMP = (2024, 1, 1, 0, 0, 0)
+
 FLATTENED_MODULES: tuple[str, ...] = (
     "core/reproducibility.py",
     "submission/solution.py",
@@ -25,10 +27,10 @@ PROMPT_FILES: tuple[str, ...] = (
     "core/prompts/verification_v1.txt",
 )
 
-REQUIREMENTS = """httpx==0.28.1
+REQUIREMENTS = """httpx==0.27.2
 numpy==1.26.4
 bm25s==0.2.14
-faiss-cpu==1.8.0.post1
+faiss-cpu==1.16.0
 """
 
 
@@ -39,10 +41,20 @@ def build(zip_path: Path, repo_root: Path) -> Path:
     if missing:
         raise FileNotFoundError(f"не найдены файлы сборки: {', '.join(missing)}")
     zip_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for source in sources:
-            archive.write(source, source.name)
-        archive.writestr("requirements.txt", REQUIREMENTS)
+    entries = [(source.name, source.read_bytes()) for source in sources]
+    entries.append(("requirements.txt", REQUIREMENTS.encode("utf-8")))
+    with zipfile.ZipFile(
+        zip_path,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=9,
+    ) as archive:
+        for name, content in sorted(entries):
+            info = zipfile.ZipInfo(name, date_time=FIXED_ZIP_TIMESTAMP)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, content, compresslevel=9)
     return zip_path
 
 

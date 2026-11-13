@@ -7,17 +7,21 @@ import json
 import re
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import bm25s
 import faiss
 import numpy as np
 
-from submission.model_client import ModelClient
+try:
+    from submission.model_client import ModelClient
+except ImportError:  # плоский корень submission.zip
+    from model_client import ModelClient
 
 CLAUSE = re.compile(r"(?m)(?=^(?:статья|раздел|глава|пункт|п\.)?\s*\d+(?:\.\d+)*[.)]?\s+)", re.I)
 DATE = re.compile(r"\b\d{2}[./-]\d{2}[./-]\d{4}\b")
 RELATION = re.compile(r"(?i)\b(изменяет|дополняет|заменяет|отменяет|утратил силу)\b")
+INDEX_MEMBERS = frozenset({"index.faiss", "chunks.json", "manifest.json"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +37,12 @@ def load_fragments(path: Path, *, max_chars: int = 1800, overlap: int = 200) -> 
     fragments: list[Fragment] = []
     with zipfile.ZipFile(path) as archive:
         for name in sorted(archive.namelist()):
-            if name.endswith("/") or Path(name).suffix.lower() not in {".txt", ".md", ".csv", ".json"}:
+            _validate_member_name(name)
+            if (
+                name.endswith("/")
+                or name in INDEX_MEMBERS
+                or Path(name).suffix.lower() not in {".txt", ".md", ".csv", ".json"}
+            ):
                 continue
             raw = archive.read(name)
             text = _decode(raw)
@@ -94,6 +103,52 @@ class HybridIndex:
         self.bm25.index(self.tokens)
 
     @classmethod
+    def archive_has_prebuilt(cls, knowledge_zip: Path) -> bool:
+        with zipfile.ZipFile(knowledge_zip) as archive:
+            names = set(archive.namelist())
+        present = names & INDEX_MEMBERS
+        if present and present != INDEX_MEMBERS:
+            missing = ", ".join(sorted(INDEX_MEMBERS - present))
+            raise ValueError(f"неполный индекс в корне ZIP, отсутствуют: {missing}")
+        return present == INDEX_MEMBERS
+
+    @classmethod
+    def from_archive(cls, knowledge_zip: Path, client: ModelClient) -> "HybridIndex":
+        """Загружает индекс из корня ZIP и сверяет SHA-256 каждого документа."""
+        with zipfile.ZipFile(knowledge_zip) as archive:
+            for name in archive.namelist():
+                _validate_member_name(name)
+            names = set(archive.namelist())
+            missing = INDEX_MEMBERS - names
+            if missing:
+                raise ValueError(f"в корне ZIP отсутствуют: {', '.join(sorted(missing))}")
+            index_bytes = archive.read("index.faiss")
+            chunks_bytes = archive.read("chunks.json")
+            manifest_bytes = archive.read("manifest.json")
+            document_hashes = {
+                name: hashlib.sha256(archive.read(name)).hexdigest()
+                for name in sorted(names - INDEX_MEMBERS)
+                if not name.endswith("/")
+            }
+
+        fragments = _load_index_fragments(chunks_bytes)
+        manifest = _load_manifest(manifest_bytes)
+        instance = cls.__new__(cls)
+        instance.fragments = fragments
+        instance.client = client
+        instance.faiss = faiss.deserialize_index(np.frombuffer(index_bytes, dtype="uint8"))
+        instance._build_lexical()
+        _validate_bundle(
+            manifest=manifest,
+            index=instance.faiss,
+            fragments=fragments,
+            chunks_bytes=chunks_bytes,
+            embedding_model=client.embedding_model,
+            document_hashes=document_hashes,
+        )
+        return instance
+
+    @classmethod
     def from_prebuilt(
         cls, index_dir: Path, knowledge_zip: Path, client: ModelClient
     ) -> "HybridIndex":
@@ -106,14 +161,9 @@ class HybridIndex:
                 raise FileNotFoundError(f"не найден обязательный файл индекса: {path.name}")
 
         raw_chunks = chunks_path.read_bytes()
-        chunks_payload = json.loads(raw_chunks)
-        rows = chunks_payload.get("chunks", []) if isinstance(chunks_payload, dict) else chunks_payload
-        if not isinstance(rows, list) or not rows:
-            raise ValueError("chunks.json должен содержать непустой список chunks")
-        fragments = [_fragment_from_record(row) for row in rows]
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if not isinstance(manifest, dict):
-            raise ValueError("manifest.json должен содержать JSON-объект")
+        fragments = _load_index_fragments(raw_chunks)
+        manifest = _load_manifest(manifest_path.read_bytes())
+        document_hashes = _hash_archive_documents(knowledge_zip)
 
         instance = cls.__new__(cls)
         instance.fragments = fragments
@@ -125,8 +175,8 @@ class HybridIndex:
             index=instance.faiss,
             fragments=fragments,
             chunks_bytes=raw_chunks,
-            knowledge_zip=knowledge_zip,
             embedding_model=client.embedding_model,
+            document_hashes=document_hashes,
         )
         return instance
 
@@ -134,6 +184,10 @@ class HybridIndex:
         count = min(top_k, len(self.fragments))
         bm_ids, _ = self.bm25.retrieve(bm25s.tokenize([query]), k=count)
         vector = np.asarray(self.client.embed([query]), dtype="float32")
+        if vector.shape != (1, self.faiss.d):
+            raise ValueError(
+                f"размерность запроса {vector.shape} не совпадает с FAISS (*, {self.faiss.d})"
+            )
         faiss.normalize_L2(vector)
         _, vec_ids = self.faiss.search(vector, count)
         scores: dict[int, float] = {}
@@ -141,9 +195,31 @@ class HybridIndex:
             for rank, index in enumerate(ranking, 1):
                 if index >= 0:
                     scores[index] = scores.get(index, 0.0) + 1.0 / (60 + rank)
-        candidates = sorted(scores, key=scores.get, reverse=True)[:top_k]
+        candidates = sorted(scores, key=lambda index: (-scores[index], index))[:top_k]
         reranked = self.client.rerank(query, [self.fragments[i].text for i in candidates], final_k)
-        return [self.fragments[candidates[index]] for index, _score in reranked]
+        result: list[Fragment] = []
+        seen: set[int] = set()
+        for index, _score in reranked:
+            if not 0 <= index < len(candidates) or index in seen:
+                raise ValueError(f"некорректный индекс reranker: {index}")
+            seen.add(index)
+            result.append(self.fragments[candidates[index]])
+        return result
+
+
+def _load_index_fragments(raw: bytes) -> list[Fragment]:
+    chunks_payload = json.loads(raw.decode("utf-8-sig"))
+    rows = chunks_payload.get("chunks", []) if isinstance(chunks_payload, dict) else chunks_payload
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("chunks.json должен содержать непустой список chunks")
+    return [_fragment_from_record(row) for row in rows]
+
+
+def _load_manifest(raw: bytes) -> dict:
+    manifest = json.loads(raw.decode("utf-8-sig"))
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest.json должен содержать JSON-объект")
+    return manifest
 
 
 def _fragment_from_record(record: object) -> Fragment:
@@ -167,8 +243,8 @@ def _validate_bundle(
     index: faiss.Index,
     fragments: list[Fragment],
     chunks_bytes: bytes,
-    knowledge_zip: Path,
     embedding_model: str,
+    document_hashes: dict[str, str],
 ) -> None:
     """Отклоняет индекс, который не соответствует текстам или ZIP корпуса."""
     expected_count = int(manifest.get("chunk_count", manifest.get("chunks_count", len(fragments))))
@@ -187,8 +263,6 @@ def _validate_bundle(
         )
 
     checks = {
-        "knowledge_base_sha256": _sha256_file(knowledge_zip),
-        "archive_sha256": _sha256_file(knowledge_zip),
         "chunks_sha256": hashlib.sha256(chunks_bytes).hexdigest(),
         "corpus_sha256": _fragments_sha256(fragments),
     }
@@ -201,15 +275,59 @@ def _validate_bundle(
         if str(expected).lower() != actual:
             raise ValueError(f"контрольная сумма {name} не совпадает")
     if declared == 0:
-        raise ValueError("manifest не содержит SHA-256 для проверки корпуса или фрагментов")
+        raise ValueError("manifest не содержит SHA-256 для проверки фрагментов")
+    expected_documents = _manifest_document_hashes(manifest)
+    if set(expected_documents) != set(document_hashes):
+        missing = sorted(set(document_hashes) - set(expected_documents))
+        extra = sorted(set(expected_documents) - set(document_hashes))
+        raise ValueError(f"manifest не соответствует документам ZIP: missing={missing}, extra={extra}")
+    for name, actual in document_hashes.items():
+        if expected_documents[name].lower() != actual:
+            raise ValueError(f"SHA-256 документа не совпадает: {name}")
+    referenced_documents = {item.source for item in fragments}
+    if "" in referenced_documents or not referenced_documents <= set(document_hashes):
+        unknown = sorted(referenced_documents - set(document_hashes))
+        raise ValueError(f"chunks.json ссылается на неизвестные документы: {unknown}")
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def _manifest_document_hashes(manifest: dict) -> dict[str, str]:
+    payload = manifest.get("documents", manifest.get("document_sha256"))
+    result: dict[str, str] = {}
+    if isinstance(payload, dict):
+        for name, value in payload.items():
+            digest = value.get("sha256") if isinstance(value, dict) else value
+            if digest:
+                result[str(name)] = str(digest)
+    elif isinstance(payload, list):
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("path") or item.get("name") or item.get("source")
+            digest = item.get("sha256") or item.get("hash")
+            if name and digest:
+                result[str(name)] = str(digest)
+    if not result:
+        raise ValueError("manifest не содержит SHA-256 всех документов")
+    for name in result:
+        _validate_member_name(name)
+    return result
+
+
+def _hash_archive_documents(path: Path) -> dict[str, str]:
+    with zipfile.ZipFile(path) as archive:
+        for name in archive.namelist():
+            _validate_member_name(name)
+        return {
+            name: hashlib.sha256(archive.read(name)).hexdigest()
+            for name in sorted(archive.namelist())
+            if not name.endswith("/")
+        }
+
+
+def _validate_member_name(name: str) -> None:
+    path = PurePosixPath(name)
+    if not name or name.startswith(("/", "\\")) or "\\" in name or ".." in path.parts:
+        raise ValueError(f"небезопасный путь внутри ZIP: {name!r}")
 
 
 def _fragments_sha256(fragments: list[Fragment]) -> str:

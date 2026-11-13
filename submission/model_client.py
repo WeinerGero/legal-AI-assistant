@@ -19,7 +19,13 @@ def _load_local_settings() -> dict[str, str]:
     """Читает только нужные имена из локального .env, не выводя значения."""
     allowed = {
         "LLM_DEV",
+        "BASE_URL",
         "LLM_BASE_URL",
+        "EMBEDDER_BASE_URL",
+        "RERANKER_BASE_URL",
+        "LLM_API_KEY",
+        "EMBEDDER_API_KEY",
+        "RERANKER_API_KEY",
         "LLM_MODEL",
         "EMB_MODEL",
         "RERANKER_MODEL",
@@ -41,18 +47,34 @@ def _load_local_settings() -> dict[str, str]:
 
 
 class ModelClient:
-    def __init__(self, *, timeout: float = 90.0, seed: int = DEFAULT_SEED) -> None:
+    def __init__(
+        self,
+        *,
+        timeout: float = 90.0,
+        seed: int = DEFAULT_SEED,
+        max_tokens: int = 1_500,
+    ) -> None:
         local = _load_local_settings()
         def get(name: str, default: str = "") -> str:
             return os.getenv(name) or local.get(name, default)
 
         local_key = get("LLM_DEV")
+        common_base_url = get("BASE_URL")
         self.base_url = (
             get("LLM_BASE_URL")
             or os.getenv("OPENAI_BASE_URL")
+            or common_base_url
             or ("https://matreshkaapi.mooo.com/v1" if local_key else "")
         ).rstrip("/")
-        self.api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or local_key or ""
+        self.api_key = get("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or local_key
+        self.embedding_base_url = (
+            get("EMBEDDER_BASE_URL") or common_base_url or self.base_url
+        ).rstrip("/")
+        self.reranker_base_url = (
+            get("RERANKER_BASE_URL") or common_base_url or self.base_url
+        ).rstrip("/")
+        self.embedding_api_key = get("EMBEDDER_API_KEY") or self.api_key
+        self.reranker_api_key = get("RERANKER_API_KEY") or self.api_key
         self.llm_model = (
             get("LLM_MODEL")
             or os.getenv("OPENAI_MODEL")
@@ -63,13 +85,22 @@ class ModelClient:
         self.reranker_model = get("RERANKER_MODEL")
         self.timeout = timeout
         self.seed = seed
+        self.max_tokens = max_tokens
 
-    def _request(self, endpoint: str, payload: dict) -> dict:
-        if not self.base_url or not self.api_key:
-            raise RuntimeError("не заданы URL или ключ LLM API")
+    def _request(
+        self,
+        endpoint: str,
+        payload: dict,
+        *,
+        base_url: str,
+        api_key: str,
+        service: str,
+    ) -> dict:
+        if not base_url or not api_key:
+            raise RuntimeError(f"не заданы URL или ключ API для {service}")
         response = httpx.post(
-            f"{self.base_url}/{endpoint.lstrip('/')}",
-            headers={"Authorization": f"Bearer {self.api_key}"},
+            f"{base_url}/{endpoint.lstrip('/')}",
+            headers={"Authorization": f"Bearer {api_key}"},
             json=payload,
             timeout=self.timeout,
         )
@@ -85,12 +116,16 @@ class ModelClient:
                 "model": self.llm_model,
                 "temperature": 0,
                 "seed": self.seed,
+                "max_tokens": self.max_tokens,
                 "response_format": {"type": "json_object"},
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": payload},
                 ],
             },
+            base_url=self.base_url,
+            api_key=self.api_key,
+            service="LLM",
         )
         content = data["choices"][0]["message"]["content"]
         if isinstance(content, dict):
@@ -99,7 +134,11 @@ class ModelClient:
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         data = self._request(
-            "embeddings", {"model": self.embedding_model, "input": list(texts)}
+            "embeddings",
+            {"model": self.embedding_model, "input": list(texts)},
+            base_url=self.embedding_base_url,
+            api_key=self.embedding_api_key,
+            service="embedder",
         )
         ordered = sorted(data["data"], key=lambda item: item.get("index", 0))
         return [item["embedding"] for item in ordered]
@@ -115,6 +154,9 @@ class ModelClient:
                 "documents": list(documents),
                 "top_n": min(top_n, len(documents)),
             },
+            base_url=self.reranker_base_url,
+            api_key=self.reranker_api_key,
+            service="reranker",
         )
         rows = data.get("results", data.get("data", []))
         return [
