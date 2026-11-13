@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "provenance": "Manual closed-corpus labels verified against tracked chunks; demo_output is evaluated as a candidate, not used as hidden truth.",
+  "questions": [
+    {"id":"1","documents":["Договор аренды А-08-2024"],"sections":["3.1","3.2"],"facts":["450 000","5-го числа"],"outcome":"success","history":false},
+    {"id":"2","documents":["ТК_ст70"],"sections":["Статья 70"],"facts":["шести месяцев"],"outcome":"success","history":false},
+    {"id":"3","documents":[],"sections":[],"facts":[],"outcome":"legal_refusal","history":false,"ambiguous":false},
+    {"id":"4","documents":["Договор аренды А-08-2024"],"sections":["3.1","3.4"],"facts":["450 000","7%"],"outcome":"success","history":false},
+    {"id":"5","documents":["Регламент согласования договоров ред 2023"],"sections":["2.4"],"facts":["10 000 000","10.01.2023"],"outcome":"success","history":false,"date_sensitive":true},
+    {"id":"6","documents":["Договор поставки П-17-2024"],"sections":["6.1","3.3"],"facts":["рабочих дней","УПД"],"outcome":"success","history":true},
+    {"id":"7","documents":["Договор аренды А-08-2024"],"sections":["4.3"],"facts":["беспрепятствен","доступ"],"outcome":"success","history":false},
+    {"id":"8","documents":["Договор поставки П-17-2024"],"sections":["6.2"],"facts":["акт","недостатк"],"outcome":"success","history":false},
+    {"id":"9","documents":["Договор поставки ПТ-05-2023"],"sections":["4.1","4.2"],"facts":["календарных дней","предоплат"],"outcome":"success","history":false},
+    {"id":"10","documents":["Регламент согласования договоров ред 2025"],"sections":["1.3"],"facts":["руководитель подразделения"],"outcome":"success","history":false},
+    {"id":"11","documents":["Служебная записка об архиве договоров"],"sections":[],"facts":["рабочих дней","СЭД"],"outcome":"success","history":false},
+    {"id":"12","documents":["ТК_ст70"],"sections":["Статья 70"],"facts":["трудового законодательства","локальных нормативных актов"],"outcome":"success","history":false},
+    {"id":"13","documents":["152ФЗ_ст9"],"sections":["Статья 9","2."],"facts":["субъект персональных данных","без согласия"],"outcome":"success","history":false,"ambiguous":true},
+    {"id":"14","documents":["ТК_ст59"],"sections":["Статья 59"],"facts":["сезонных работ","срочный трудовой договор"],"outcome":"success","history":false},
+    {"id":"15","documents":["Договор аренды А-08-2024"],"sections":["6.3"],"facts":["по акту","нормального износа"],"outcome":"success","history":true},
+    {"id":"16","documents":["Договор поставки П-17-2024"],"sections":["2.1"],"facts":["упаковк","доставк"],"outcome":"success","history":true},
+    {"id":"17","documents":["Договор поставки ПТ-05-2023"],"sections":["6.1"],"facts":["производител","гарантийн"],"outcome":"success","history":true,"ambiguous":true},
+    {"id":"18","documents":["Регламент согласования договоров ред 2025"],"sections":["3.2"],"facts":["рабочих дней","юридический отдел"],"outcome":"success","history":true}
+  ]
+}
