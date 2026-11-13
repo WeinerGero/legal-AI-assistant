@@ -71,6 +71,7 @@ class EvidenceDraft:
     start_char: int
     end_char: int
     applicability_note: str | None = None
+    metadata_review_status: str = "unknown"
 
 
 @dataclass(slots=True)
@@ -207,6 +208,7 @@ def build_evidence(
             section=draft.section,
             text=draft.text,
             applicability_note=draft.applicability_note,
+            metadata_review_status=draft.metadata_review_status,
         )
         for position, draft in enumerate(drafts, start=1)
     ]
@@ -240,6 +242,7 @@ def _explode_chunk(
                 start_char=chunk.start_char,
                 end_char=chunk.end_char,
                 applicability_note=note,
+                metadata_review_status=document.metadata_review_status,
             )
         ]
     width = chunk.end_char - chunk.start_char
@@ -257,6 +260,7 @@ def _explode_chunk(
                 start_char=start,
                 end_char=end,
                 applicability_note=note,
+                metadata_review_status=document.metadata_review_status,
             )
         )
     return parts

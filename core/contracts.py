@@ -161,6 +161,7 @@ class Evidence(BaseModel):
     section: str
     text: str
     applicability_note: str | None = None
+    metadata_review_status: Literal["verified", "pending", "conflict", "unknown"] = "unknown"
 
 
 class ApplicabilityPredicate(BaseModel):
@@ -462,6 +463,9 @@ class DocumentRef(BaseModel):
     version_label: str
     title: str
     canonical_text: str
+    effective_from: date | None = None
+    effective_to: date | None = None
+    metadata_review_status: Literal["verified", "pending", "conflict", "unknown"] = "unknown"
 
 
 class ChunkRef(BaseModel):
