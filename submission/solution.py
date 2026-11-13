@@ -14,6 +14,15 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    from submission.model_client import ModelClient
+    from submission.pipeline import SubmissionPipeline
+    from submission.search import HybridIndex, load_fragments
+except ImportError:  # плоский корень submission.zip
+    from model_client import ModelClient
+    from pipeline import SubmissionPipeline
+    from search import HybridIndex, load_fragments
+
 MAX_ANSWER_CHARS = 10_000
 
 
@@ -58,7 +67,31 @@ def write_submission(path: Path, rows: list[tuple[str, str]]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Конвейер целиком; при техническом сбое юридический ответ не изобретается."""
-    raise NotImplementedError("сборка конкурсных адаптеров и запуск pipeline")
+    args = argv or []
+    config = RuntimeConfig.from_env()
+    questions_path = config.data_dir / "questions.csv"
+    knowledge_path = config.data_dir / "knowledge-base.zip"
+    output_path = Path(args[0]) if args else Path("submission.csv")
+
+    questions = read_questions(questions_path)
+    client = ModelClient()
+    index = HybridIndex(load_fragments(knowledge_path), client)
+    pipeline = SubmissionPipeline(
+        index,
+        client,
+        top_k=config.top_k,
+        evidence_k=config.reranker_top_n,
+    )
+    rows: list[tuple[str, str]] = []
+    for question_id, question in questions:
+        try:
+            answer = pipeline.run(question)
+        except Exception as exc:
+            print(f"question {question_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            answer = "Не удалось получить подтверждённый ответ из-за технической ошибки."
+        rows.append((question_id, answer))
+    write_submission(output_path, rows)
+    return 0
 
 
 if __name__ == "__main__":
