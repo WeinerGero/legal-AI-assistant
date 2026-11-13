@@ -22,6 +22,7 @@ ROLE_LINE = re.compile(r"(?im)^(user|assistant|пользователь|асси
 CLAIM_STATUSES = {"supported", "partially_supported", "unsupported", "contradicted"}
 VERDICTS = {"pass", "revision_required", "insufficient_evidence"}
 REVISION_MIN_REMAINING_SECONDS = 90.0
+RECOVERY_MIN_REMAINING_SECONDS = 60.0
 MAX_RENDERED_ANSWER_CHARS = 10_000
 
 
@@ -161,29 +162,81 @@ class SubmissionPipeline:
 
 
     def recovery_answer(self, question: str) -> str:
+        if self.client.budget is not None:
+            self.client.budget.require(
+                "verified recovery",
+                reserve_seconds=RECOVERY_MIN_REMAINING_SECONDS,
+            )
         messages = parse_conversation(question)
         last_question = next((item["content"] for item in reversed(messages) if item["role"] == "user"), question)
         fragments = self.index.search(last_question, top_k=18, final_k=6)
-        context = "\n\n".join(
-            f"[{i}] Документ: {item.source}\nПоложение: {self.index.verified_citation_section(item)}\n{item.text}"
-            for i, item in enumerate(fragments, 1)
+        evidence = [
+            {
+                "evidence_id": f"E{number:03d}",
+                "document": item.source,
+                "section": self.index.verified_citation_section(item),
+                "dates": item.dates,
+                "relations": item.relations,
+                "text": item.text,
+            }
+            for number, item in enumerate(fragments, 1)
+        ]
+        target_language = _question_language(last_question)
+        analysis = {
+            "target_language": target_language,
+            "standalone_question": last_question,
+            "requested_facts": [],
+        }
+        generation = self._generate(
+            {
+                "mode": "recovery",
+                "target_language": target_language,
+                "question": last_question,
+                "requested_facts": [],
+                "evidence": evidence,
+            },
+            evidence,
         )
-        prompt = (
-            "Ты юридический помощник. Отвечай на языке последнего вопроса на основании только предоставленных "
-            "документов, без внешних знаний. Дай содержательный краткий ответ на последнюю "
-            "реплику пользователя с учётом истории. Каждое юридическое утверждение сопровождай "
-            "ссылкой на реальный документ и пункт. Не выдумывай факты или номера пунктов. "
-            "Если документов недостаточно, явно сообщи об этом. Ответ дай обычным текстом."
-        )
-        payload = json.dumps({"messages": messages, "evidence": context}, ensure_ascii=False)
-        result = self.client.complete_json(prompt, payload, stage="recovery")
-        result = result.strip()
-        if not result:
-            raise ValueError("резервная генерация вернула пустой ответ")
+        verification = self._verify(messages, analysis, generation, evidence)
+        if verification["verdict"] == "pass":
+            result = _render_citations(
+                generation,
+                evidence,
+                target_language=target_language,
+            )
+            state = (
+                "legal_refusal"
+                if generation.get("answer_type") == "insufficient_evidence"
+                else "success"
+            )
+            retained_claims = len(generation["claims"])
+        else:
+            partial = _render_verified_partial_answer(
+                generation,
+                verification,
+                evidence,
+                target_language=target_language,
+            )
+            if partial is None:
+                raise ValueError("recovery answer was not verified")
+            result, retained_claims = partial
+            state = "success"
+        total_claims = len(generation["claims"])
+        self.last_outcome = {
+            "state": state,
+            "retained_claims": retained_claims,
+            "total_claims": total_claims,
+            "retained_claims_rate": retained_claims / total_claims if total_claims else 0.0,
+            "verification": verification["verdict"],
+            "recovery_used": True,
+        }
         return result
 
     def _generate(self, request: dict, evidence: list[dict]) -> dict:
-        stage = "generation_revision" if request.get("mode") == "revision" else "generation"
+        stage = {
+            "revision": "generation_revision",
+            "recovery": "generation_recovery",
+        }.get(request.get("mode"), "generation")
         generation = self._json(
             self.client.complete_json(
                 self.generation_prompt,
@@ -604,3 +657,10 @@ def _language_match_heuristic(answer: str, language: str) -> float | None:
     if main_language == "en":
         return float(latin >= cyrillic)
     return None
+
+
+def _question_language(question: str) -> str:
+    letters = [character for character in question if character.isalpha()]
+    cyrillic = sum("\u0400" <= character <= "\u04ff" for character in letters)
+    latin = sum("a" <= character.casefold() <= "z" for character in letters)
+    return "ru" if cyrillic >= latin else "en"

@@ -335,6 +335,7 @@ def _worker_main(argv: list[str] | None = None) -> int:
             pipeline = SubmissionPipeline(index, client, top_k=config.top_k,
                                           evidence_k=config.reranker_top_n)
             concurrent = client.recording.mode == "live" and config.max_workers > 1
+            completed_positions: set[int] = set()
             def solve(position: int, question_id: str, question: str) -> tuple[int, str]:
                 question_started = perf_counter()
                 final_state = "technical_refusal"
@@ -378,9 +379,14 @@ def _worker_main(argv: list[str] | None = None) -> int:
                         terminal_error = type(exc).__name__
                         print(f"Вопрос {question_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
                         try:
-                            budget.require("recovery answer", reserve_seconds=15.0)
+                            budget.require("recovery answer", reserve_seconds=60.0)
                             worker_client.mark_fallback()
                             answer = worker_pipeline.recovery_answer(question)
+                            final_state = str(
+                                worker_pipeline.last_outcome.get(
+                                    "state", "technical_refusal"
+                                )
+                            )
                         except ReplayMismatchError:
                             raise
                         except Exception as recovery_exc:
@@ -439,6 +445,7 @@ def _worker_main(argv: list[str] | None = None) -> int:
                         for future in done:
                             position, answer = future.result()
                             answers[position] = answer
+                            completed_positions.add(position)
                             completed += 1
                             write_submission_atomic(
                                 output_path,
@@ -456,6 +463,7 @@ def _worker_main(argv: list[str] | None = None) -> int:
                         break
                     position, answer = solve(i, qid, q)
                     answers[position] = answer
+                    completed_positions.add(position)
                     write_submission_atomic(
                         output_path,
                         [(row_id, answers[j]) for j, (row_id, _row_q) in enumerate(questions)],
@@ -463,6 +471,32 @@ def _worker_main(argv: list[str] | None = None) -> int:
                     if (i + 1) % 10 == 0 or i + 1 == len(questions):
                         print(f"Обработано {i + 1}/{len(questions)}", flush=True)
             rows = [(qid, answers[i]) for i, (qid, _question) in enumerate(questions)]
+            for position, (question_id, _question) in enumerate(questions):
+                if position in completed_positions:
+                    continue
+                event = {
+                    "event": "question_complete",
+                    "question_id": question_id,
+                    "stage": "budget",
+                    "duration_ms": None,
+                    "error_type": "BudgetExceededError",
+                    "http_status": None,
+                    "retries": 0,
+                    "fallback_used": True,
+                    "final_state": "technical_refusal",
+                }
+                print(json.dumps(event, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+                if metrics is not None:
+                    metrics.set_question(question_id)
+                    metrics.record(
+                        "outcome",
+                        "question",
+                        **{
+                            ("api_stage" if key == "stage" else key): value
+                            for key, value in event.items()
+                            if key != "event"
+                        },
+                    )
             if metrics is not None:
                 metrics.set_question(None)
             client.recording.set_question(None)
