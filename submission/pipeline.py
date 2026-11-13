@@ -21,6 +21,7 @@ LANGUAGE_TAG = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
 ROLE_LINE = re.compile(r"(?im)^(user|assistant|пользователь|ассистент)\s*:\s*")
 CLAIM_STATUSES = {"supported", "partially_supported", "unsupported", "contradicted"}
 VERDICTS = {"pass", "revision_required", "insufficient_evidence"}
+REVISION_MIN_REMAINING_SECONDS = 90.0
 
 
 class SubmissionPipeline:
@@ -46,9 +47,22 @@ class SubmissionPipeline:
             )
             _validate_analysis(analysis)
             standalone = analysis["standalone_question"].strip()
-            queries = analysis["lexical_queries"] + analysis["semantic_queries"]
-            query = " ".join(str(item) for item in queries if str(item).strip()) or standalone
-            fragments = self.index.search(query, top_k=self.top_k, final_k=self.evidence_k)
+            lexical = [standalone, *analysis["lexical_queries"]]
+            semantic = analysis["semantic_queries"] or [standalone]
+            entities = analysis["entities"]
+            all_queries = [*lexical, *semantic]
+            self._record_quality(
+                "analysis", context_turns=len(messages), language_detected=1,
+                entities_count=len(entities),
+                requested_facts_count=len(analysis["requested_facts"]),
+                lexical_queries_count=len(analysis["lexical_queries"]),
+                semantic_queries_count=len(analysis["semantic_queries"]),
+                ambiguous_count=len(analysis["unresolved_ambiguities"]),
+                query_diversity=len({str(v).casefold() for v in all_queries}) / len(all_queries),
+            )
+            fragments = self.index.search_queries(
+                lexical, semantic, top_k=self.top_k, final_k=self.evidence_k
+            )
             evidence = [
                 {
                     "evidence_id": f"E{number:03d}",
@@ -70,7 +84,15 @@ class SubmissionPipeline:
             }
             generation = self._generate(generation_request, evidence)
             verification = self._verify(messages, analysis, generation, evidence)
-            if verification["verdict"] != "pass":
+            revised = verification["verdict"] != "pass"
+            revision_allowed = (
+                revised
+                and (
+                    self.client.budget is None
+                    or not self.client.budget.exhausted(REVISION_MIN_REMAINING_SECONDS)
+                )
+            )
+            if revision_allowed:
                 generation = self._generate(
                     {
                         **generation_request,
@@ -81,27 +103,70 @@ class SubmissionPipeline:
                     evidence,
                 )
                 verification = self._verify(messages, analysis, generation, evidence)
+                if self.client.metrics is not None:
+                    self.client.metrics.record("budget", "revision", executed=1)
+            elif revised and self.client.metrics is not None:
+                self.client.metrics.record("budget", "revision", executed=0)
             if verification["verdict"] == "pass":
                 result = _render_citations(
                     generation, evidence, target_language=analysis["target_language"]
                 )
             else:
                 result = _insufficient_evidence_answer(analysis["target_language"])
+            self._record_quality(
+                "question", revised=int(revised), verified_pass=int(verification["verdict"] == "pass"),
+                answer_length=len(result),
+            )
             self._record_question(started, generation, verification, technical_failure=False)
             return result
         except Exception as exc:
             self._record_question(started, None, None, technical_failure=True, error=exc)
             raise
 
+
+    def recovery_answer(self, question: str) -> str:
+        messages = parse_conversation(question)
+        last_question = next((item["content"] for item in reversed(messages) if item["role"] == "user"), question)
+        fragments = self.index.search(last_question, top_k=18, final_k=6)
+        context = "\n\n".join(
+            f"[{i}] Документ: {item.source}\nПоложение: {self.index.verified_citation_section(item)}\n{item.text}"
+            for i, item in enumerate(fragments, 1)
+        )
+        prompt = (
+            "Ты юридический помощник. Отвечай на языке последнего вопроса на основании только предоставленных "
+            "документов, без внешних знаний. Дай содержательный краткий ответ на последнюю "
+            "реплику пользователя с учётом истории. Каждое юридическое утверждение сопровождай "
+            "ссылкой на реальный документ и пункт. Не выдумывай факты или номера пунктов. "
+            "Если документов недостаточно, явно сообщи об этом. Ответ дай обычным текстом."
+        )
+        payload = json.dumps({"messages": messages, "evidence": context}, ensure_ascii=False)
+        result = self.client.complete_json(prompt, payload, stage="recovery")
+        result = result.strip()
+        if not result:
+            raise ValueError("резервная генерация вернула пустой ответ")
+        return result
+
     def _generate(self, request: dict, evidence: list[dict]) -> dict:
+        stage = "generation_revision" if request.get("mode") == "revision" else "generation"
         generation = self._json(
             self.client.complete_json(
                 self.generation_prompt,
                 json.dumps(request, ensure_ascii=False),
-                stage="generation",
+                stage=stage,
             )
         )
         _validate_generation(generation, evidence)
+        claims = generation["claims"]
+        references = [item for claim in claims for item in claim["evidence_ids"]]
+        self._record_quality(
+            "generation", claims_count=len(claims), citations_count=len(references),
+            unique_citations_count=len(set(references)),
+            claims_with_citations_rate=sum(bool(c["evidence_ids"]) for c in claims) / len(claims) if claims else 1.0,
+            answer_length=len(generation["answer"]),
+            language_match_heuristic=_language_match_heuristic(
+                generation["answer"], request["target_language"]
+            ),
+        )
         return generation
 
     def _verify(
@@ -129,7 +194,21 @@ class SubmissionPipeline:
             )
         )
         _validate_verification(verification, generation, evidence)
+        checks = verification["claim_checks"]
+        self._record_quality(
+            "verification", checked_claims_count=len(checks),
+            verification_coverage=len(checks) / len(generation["claims"]) if generation["claims"] else 1.0,
+            self_reported_supported_rate=sum(c["status"] == "supported" for c in checks) / len(checks) if checks else 0.0,
+            unsupported_claims_count=sum(c["status"] != "supported" for c in checks),
+            unanswered_facts_count=len(verification["unanswered_facts"]),
+            issues_count=len(verification["issues"]),
+            passed=int(verification["verdict"] == "pass"),
+        )
         return verification
+
+    def _record_quality(self, stage: str, **fields: object) -> None:
+        if self.client.metrics is not None:
+            self.client.metrics.record("quality", stage, **fields)
 
     def _record_question(
         self,
@@ -176,7 +255,24 @@ class SubmissionPipeline:
 
     @staticmethod
     def _json(value: str) -> dict:
-        data = json.loads(value)
+        text = value.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if len(lines) >= 3 and lines[-1].strip() == "```":
+                text = "\n".join(lines[1:-1]).strip()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            decoder = json.JSONDecoder()
+            data = None
+            for pos, char in enumerate(text[:256]):
+                if char != "{":
+                    continue
+                try:
+                    data, _ = decoder.raw_decode(text[pos:])
+                    break
+                except json.JSONDecodeError:
+                    pass
         if not isinstance(data, dict):
             raise ValueError("модель вернула JSON не в виде объекта")
         return data
@@ -247,8 +343,17 @@ def _validate_generation(generation: dict, evidence: list[dict]) -> None:
     claims = generation.get("claims")
     if not isinstance(claims, list):
         raise ValueError("generation.claims должен быть массивом")
+    answer_type = generation.get("answer_type", "answer")
+    if answer_type not in {"answer", "insufficient_evidence"}:
+        raise ValueError("неподдерживаемый тип ответа")
     if not claims:
-        raise ValueError("публикация ответа без structured claims запрещена")
+        if answer_type != "insufficient_evidence" or not generation["missing_facts"]:
+            raise ValueError("публикация ответа без structured claims запрещена")
+        if re.search(r"\bE\d{3,}\b", generation["answer"]):
+            raise ValueError("отказ без утверждений не может содержать evidence ID")
+        return
+    if answer_type != "answer":
+        raise ValueError("юридические утверждения несовместимы с полным отказом")
     known = {item["evidence_id"] for item in evidence}
     seen: set[str] = set()
     answer_ids = set(INLINE_EVIDENCE.findall(generation["answer"]))
@@ -321,6 +426,10 @@ def _validate_verification(verification: dict, generation: dict, evidence: list[
     if not isinstance(unanswered, list) or not isinstance(issues, list):
         raise ValueError("verification completeness fields должны быть массивами")
     if verdict == "pass":
+        if generation.get("answer_type") == "insufficient_evidence" and (
+            generation["claims"] or not generation.get("missing_facts")
+        ):
+            raise ValueError("отказ недостаточно обоснован")
         if checked != claim_ids:
             raise ValueError("verification pass не проверил каждый claim")
         if any(check["status"] != "supported" for check in checks):
@@ -366,12 +475,23 @@ def _insufficient_evidence_answer(target_language: str) -> str:
 
 
 def _load_prompt(filename: str) -> str:
-    module_dir = Path(__file__).resolve().parent
-    candidates = (
-        module_dir / filename,
-        module_dir.parent / "core" / "prompts" / filename,
-    )
-    for path in candidates:
-        if path.is_file():
-            return path.read_text(encoding="utf-8").strip()
-    raise FileNotFoundError(f"не найдена системная инструкция: {filename}")
+    try:
+        from prompts import PROMPTS
+    except ImportError:
+        prompt_path = Path(__file__).resolve().parents[1] / "core" / "prompts" / filename
+        return prompt_path.read_text(encoding="utf-8").strip()
+    return PROMPTS[filename].strip()
+
+
+def _language_match_heuristic(answer: str, language: str) -> float | None:
+    letters = [c for c in answer if c.isalpha()]
+    if not letters:
+        return None
+    cyrillic = sum("\u0400" <= c <= "\u04ff" for c in letters)
+    latin = sum(("a" <= c.lower() <= "z") for c in letters)
+    main_language = language.casefold().split("-")[0]
+    if main_language in {"ru", "uk", "be"}:
+        return float(cyrillic >= latin)
+    if main_language == "en":
+        return float(latin >= cyrillic)
+    return None

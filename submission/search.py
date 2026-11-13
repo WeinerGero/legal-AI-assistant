@@ -5,6 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
+import io
+from xml.etree import ElementTree as ET
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -53,11 +56,11 @@ def load_fragments(path: Path, *, max_chars: int = 1800, overlap: int = 200) -> 
             if (
                 name.endswith("/")
                 or name in INDEX_MEMBERS
-                or Path(name).suffix.lower() not in {".txt", ".md", ".csv", ".json"}
+                or Path(name).suffix.lower() not in {".txt", ".md", ".csv", ".json", ".docx"}
             ):
                 continue
             raw = archive.read(name)
-            text = _decode(raw)
+            text = _read_docx(raw) if Path(name).suffix.lower() == ".docx" else _decode(raw)
             if Path(name).suffix.lower() == ".json":
                 try:
                     text = json.dumps(json.loads(text), ensure_ascii=False, indent=2)
@@ -87,6 +90,16 @@ def load_fragments(path: Path, *, max_chars: int = 1800, overlap: int = 200) -> 
     return fragments
 
 
+def _read_docx(raw: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        root = ET.fromstring(archive.read("word/document.xml"))
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    return "\n".join(
+        "".join(part.text or "" for part in paragraph.iter(namespace + "t"))
+        for paragraph in root.iter(namespace + "p")
+    )
+
+
 def _decode(raw: bytes) -> str:
     for encoding in ("utf-8-sig", "utf-8", "cp1251"):
         try:
@@ -107,18 +120,42 @@ class HybridIndex:
         }
         self._build_lexical()
         corpus = [item.text for item in self.fragments]
-        embeddings = np.asarray(client.embed(corpus), dtype="float32")
-        if embeddings.ndim != 2 or embeddings.shape[0] != len(self.fragments):
-            raise ValueError("API эмбеддингов вернул несовместимую матрицу")
-        faiss.normalize_L2(embeddings)
-        self.faiss = faiss.IndexFlatIP(embeddings.shape[1])
-        self.faiss.add(embeddings)
+        self.faiss = None
+        try:
+            vectors = []
+            for start in range(0, len(corpus), 24):
+                vectors.extend(client.embed(corpus[start:start + 24]))
+            embeddings = np.asarray(vectors, dtype="float32")
+            if embeddings.ndim != 2 or embeddings.shape[0] != len(self.fragments):
+                raise ValueError("API эмбеддингов вернул несовместимую матрицу")
+            faiss.normalize_L2(embeddings)
+            self.faiss = faiss.IndexFlatIP(embeddings.shape[1])
+            self.faiss.add(embeddings)
+        except ReplayMismatchError:
+            raise
+        except Exception as exc:
+            print(f"Не удалось перестроить FAISS: {type(exc).__name__}", file=sys.stderr)
 
     def _build_lexical(self) -> None:
-        corpus = [item.text for item in self.fragments]
+        corpus = [f"{item.source} {item.section} {item.text}" for item in self.fragments]
         self.tokens = bm25s.tokenize(corpus, stopwords="ru")
         self.bm25 = bm25s.BM25()
         self.bm25.index(self.tokens)
+
+    @classmethod
+    def bm25_only(cls, fragments: list[Fragment], client: ModelClient) -> "HybridIndex":
+        """Build a bounded local fallback without document embedding requests."""
+        instance = cls.__new__(cls)
+        instance.fragments = fragments
+        instance.client = client
+        instance.faiss = None
+        instance._verified_citations = {
+            _citation_key(fragment)
+            for fragment in fragments
+            if fragment.citation_section
+        }
+        instance._build_lexical()
+        return instance
 
     @classmethod
     def archive_has_prebuilt(cls, knowledge_zip: Path) -> bool:
@@ -214,116 +251,115 @@ class HybridIndex:
             raise ValueError("пункт фрагмента не подтверждён исходным документом")
         return fragment.citation_section
 
-    def search(self, query: str, *, top_k: int = 30, final_k: int = 10) -> list[Fragment]:
-        count = min(top_k, len(self.fragments))
-        started = perf_counter()
-        try:
-            bm_ids, _ = self.bm25.retrieve(bm25s.tokenize([query]), k=count)
-        except Exception as exc:
-            self._record_rag("bm25", started, error=exc)
-            raise
-        self._record_rag(
-            "bm25",
-            started,
-            candidates_count=len({int(item) for item in bm_ids[0] if item >= 0}),
-        )
-        self.client.recording.checkpoint("rag.bm25", bm_ids[0].tolist())
+    def search(self, query: str, *, top_k: int = 24, final_k: int = 8) -> list[Fragment]:
+        return self.search_queries([query], [query], top_k=top_k, final_k=final_k)
 
+    def search_queries(
+        self,
+        lexical_queries: list[str],
+        semantic_queries: list[str],
+        *,
+        top_k: int = 24,
+        final_k: int = 8,
+    ) -> list[Fragment]:
+        lexical = _unique_queries(lexical_queries, limit=3)
+        semantic = _unique_queries(semantic_queries, limit=2)
+        if not lexical and not semantic:
+            raise ValueError("поисковые запросы пусты")
+        if not lexical:
+            lexical = semantic[:1]
+        if not semantic:
+            semantic = lexical[:1]
+        count = min(max(top_k, final_k, 1), len(self.fragments))
         started = perf_counter()
         try:
-            vector = np.asarray(self.client.embed([query]), dtype="float32")
+            bm_ids, _ = self.bm25.retrieve(bm25s.tokenize(lexical), k=count)
         except Exception as exc:
-            self._record_rag("embeddings", started, error=exc)
+            self._record_rag("bm25", started, error=exc, query_count=len(lexical))
             raise
-        if vector.shape != (1, self.faiss.d):
-            error = ValueError(
-                f"размерность запроса {vector.shape} не совпадает с FAISS (*, {self.faiss.d})"
-            )
-            self._record_rag("embeddings", started, error=error, request_count=1)
-            raise error
-        self._record_rag("embeddings", started, request_count=1, model=self.client.embedding_model)
-        faiss.normalize_L2(vector)
+        bm_rankings = [[int(i) for i in row if i >= 0] for row in bm_ids]
+        bm_set = {i for row in bm_rankings for i in row}
+        self._record_rag("bm25", started, candidates_count=len(bm_set), query_count=len(lexical),
+                         ranked_document_ids=_ranked_doc_ids(bm_rankings, self.fragments))
+        self.client.recording.checkpoint("rag.bm25", bm_rankings)
 
-        started = perf_counter()
-        try:
-            _, vec_ids = self.faiss.search(vector, count)
-        except Exception as exc:
-            self._record_rag("faiss", started, error=exc)
-            raise
-        self._record_rag(
-            "faiss",
-            started,
-            candidates_count=len({int(item) for item in vec_ids[0] if item >= 0}),
-        )
-        self.client.recording.checkpoint("rag.faiss", vec_ids[0].tolist())
+        vec_rankings: list[list[int]] = []
+        vec_set: set[int] = set()
+        if self.faiss is not None:
+            started = perf_counter()
+            try:
+                vector = np.asarray(self.client.embed(semantic), dtype="float32")
+                if vector.shape != (len(semantic), self.faiss.d):
+                    raise ValueError(f"размерность запросов {vector.shape} не совпадает с FAISS")
+                faiss.normalize_L2(vector)
+                self._record_rag("embeddings", started, request_count=1, query_count=len(semantic),
+                                 model=self.client.embedding_model, embedding_dimension=self.faiss.d,
+                                 vector_norm=float(np.linalg.norm(vector[0])))
+                started = perf_counter()
+                _distances, vec_ids = self.faiss.search(vector, count)
+                vec_rankings = [[int(i) for i in row if i >= 0] for row in vec_ids]
+                vec_set = {i for row in vec_rankings for i in row}
+                self._record_rag("faiss", started, candidates_count=len(vec_set),
+                                 query_count=len(semantic),
+                                 ranked_document_ids=_ranked_doc_ids(vec_rankings, self.fragments))
+                self.client.recording.checkpoint("rag.faiss", vec_rankings)
+            except ReplayMismatchError:
+                raise
+            except Exception as exc:
+                self._record_rag("embeddings", started, error=exc, request_count=1, query_count=len(semantic))
+                print(f"Недоступен смысловой поиск: {type(exc).__name__}", file=sys.stderr)
 
         started = perf_counter()
         scores: dict[int, float] = {}
-        for ranking in (bm_ids[0].tolist(), vec_ids[0].tolist()):
-            for rank, index in enumerate(ranking, 1):
-                if index >= 0:
-                    scores[index] = scores.get(index, 0.0) + 1.0 / (60 + rank)
-        candidates = sorted(scores, key=lambda index: (-scores[index], index))[:top_k]
-        self._record_rag("fusion", started, candidates_count=len(candidates))
+        for rankings in (bm_rankings, vec_rankings):
+            for ranking in rankings:
+                for rank, index in enumerate(ranking, 1):
+                    scores[index] = scores.get(index, 0.0) + 1.0 / (len(rankings) * (60 + rank))
+        candidates = sorted(scores, key=lambda i: (-scores[i], i))[:top_k]
+        self._record_rag("fusion", started, candidates_count=len(candidates),
+                         bm25_faiss_overlap=len(bm_set & vec_set) / len(bm_set | vec_set) if bm_set | vec_set else 0,
+                         unique_documents_count=len({self.fragments[i].source for i in candidates}),
+                         ranked_document_ids=_ranked_doc_ids([candidates], self.fragments))
         self.client.recording.checkpoint("rag.fusion", candidates)
 
         started = perf_counter()
+        ranking_query = " ".join(semantic)
+        fallback = False
+        error: Exception | None = None
         try:
             reranked = self.client.rerank(
-                query, [self.fragments[i].text for i in candidates], final_k
+                ranking_query, [self.fragments[i].text for i in candidates], final_k
             )
+            if not reranked:
+                raise ValueError("API переранжирования не вернул кандидатов")
+            selected: list[tuple[int, float | None]] = []
+            seen: set[int] = set()
+            for index, score in reranked:
+                if not 0 <= index < len(candidates) or index in seen:
+                    raise ValueError(f"некорректный индекс reranker: {index}")
+                seen.add(index)
+                selected.append((index, score))
         except ReplayMismatchError:
             raise
         except Exception as exc:
-            fallback_indexes = list(range(min(final_k, len(candidates))))
-            result = [self.fragments[candidates[index]] for index in fallback_indexes]
-            self._record_rag(
-                "rerank",
-                started,
-                error=exc,
-                candidates_count=len(candidates),
-                selected_fragments_count=len(result),
-                unique_sources_count=len({fragment.source for fragment in result}),
-                fallback_used=True,
-            )
-            self.client.recording.checkpoint(
-                "rag.rerank",
-                [
-                    {
-                        "candidate_index": index,
-                        "source": self.fragments[candidates[index]].source,
-                        "section": self.fragments[candidates[index]].section,
-                        "fallback": True,
-                    }
-                    for index in fallback_indexes
-                ],
-            )
-            return result
-        result: list[Fragment] = []
-        seen: set[int] = set()
-        for index, _score in reranked:
-            if not 0 <= index < len(candidates) or index in seen:
-                raise ValueError(f"некорректный индекс reranker: {index}")
-            seen.add(index)
-            result.append(self.fragments[candidates[index]])
+            fallback = True
+            error = exc
+            selected = [(i, None) for i in range(min(final_k, len(candidates)))]
+        result = [self.fragments[candidates[i]] for i, _score in selected]
+        present_scores = [float(score) for _index, score in selected if isinstance(score, (int, float))]
         self._record_rag(
-            "rerank",
-            started,
-            model=self.client.reranker_model,
-            candidates_count=len(candidates),
-            selected_fragments_count=len(result),
-            unique_sources_count=len({fragment.source for fragment in result}),
+            "rerank", started, error=error, model=self.client.reranker_model,
+            candidates_count=len(candidates), selected_fragments_count=len(result),
+            unique_sources_count=len({fragment.source for fragment in result}), fallback_used=fallback,
+            score_available_rate=len(present_scores) / len(selected) if selected else 0.0,
+            top_score=present_scores[0] if present_scores else None,
+            ranked_document_ids=_ranked_doc_ids([[candidates[i] for i, _ in selected]], self.fragments),
         )
         self.client.recording.checkpoint(
             "rag.rerank",
-            [
-                {
-                    "candidate_index": index,
-                    "source": self.fragments[candidates[index]].source,
-                    "section": self.fragments[candidates[index]].section,
-                }
-                for index, _score in reranked
-            ],
+            [{"candidate_index": i, "source": self.fragments[candidates[i]].source,
+              "section": self.fragments[candidates[i]].section, "fallback": fallback}
+             for i, _score in selected],
         )
         return result
 
@@ -596,3 +632,31 @@ def _fragments_sha256(fragments: list[Fragment]) -> str:
     ]
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _unique_queries(queries: list[str], *, limit: int) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in queries:
+        if not isinstance(item, str):
+            continue
+        query = " ".join(item.split())
+        key = query.casefold()
+        if query and key not in seen:
+            seen.add(key)
+            unique.append(query[:1000])
+        if len(unique) >= limit:
+            break
+    return unique
+
+
+def _ranked_doc_ids(rankings: list[list[int]], fragments: list[Fragment]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for ranking in rankings:
+        for index in ranking:
+            name = hashlib.sha256(fragments[index].source.encode("utf-8")).hexdigest()[:16]
+            if name not in seen:
+                result.append(name)
+                seen.add(name)
+    return result

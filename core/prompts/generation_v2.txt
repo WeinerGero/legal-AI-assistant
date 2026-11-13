@@ -37,10 +37,13 @@ COMPLETENESS
 OUTPUT
 - Return only valid JSON.
 - The answer field must be written entirely in target_language, except for original document names and identifiers.
-- Each claim must contain its supporting evidence IDs.
+- For a supported answer, set answer_type to "answer" and include claims with valid evidence IDs.
+- For a genuine insufficient-evidence refusal without legal claims, set answer_type to "insufficient_evidence", claims to [], missing_facts to a nonempty list, and do not include any [E###] references. This exception is only for a refusal containing no positive legal assertions.
+- Each positive claim must contain its supporting evidence IDs.
 - Keep claim text consistent with the answer.
 
 {
+  "answer_type": "answer",
   "answer": "",
   "claims": [
     {

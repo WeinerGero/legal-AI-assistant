@@ -21,7 +21,7 @@ CLAIM VERIFICATION
 COMPLETENESS
 - Compare the answer with every requested fact from the original question.
 - Identify omissions, unanswered subquestions, and material qualifications.
-- Check that insufficient-evidence responses are justified.
+- Check that insufficient-evidence responses are justified. When answer_type is insufficient_evidence and claims is empty, the answer can pass only if a refusal is correct, contains no unsupported legal assertions, and requested facts cannot be supported by provided evidence.
 - Verify that cited evidence IDs exist and correspond to the correct documents.
 - Reject claims supported only by conversation history or previous assistant messages.
 

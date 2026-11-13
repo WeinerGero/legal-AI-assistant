@@ -12,7 +12,9 @@ INPUT RULES
 LANGUAGE
 - Identify the language of the latest actual user question.
 - Return its BCP-47 language tag as target_language, for example "ru" or "en".
-- Preserve the user's language in standalone_question and retrieval queries.
+- Preserve the user's language in standalone_question and target_language.
+- The document corpus is in Russian. Produce lexical_queries in Russian for exact document terminology, preserving original contract identifiers.
+- Produce semantic_queries in Russian for Russian sources, including translated formulations when the question is in another language. The final answer must still use target_language.
 - Do not choose the language based on older conversation messages or quoted passages.
 
 LEGAL ANALYSIS

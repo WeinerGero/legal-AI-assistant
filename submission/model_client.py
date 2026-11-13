@@ -6,15 +6,17 @@ import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any
 
 import httpx
 
 try:
+    from submission.budget import RuntimeBudget
     from core.reproducibility import DEFAULT_SEED
     from submission.recording import APIRecordingStore
 except ImportError:  # плоский корень submission.zip
+    from budget import RuntimeBudget
     from reproducibility import DEFAULT_SEED
     from recording import APIRecordingStore
 
@@ -56,9 +58,11 @@ class ModelClient:
         *,
         timeout: float = 90.0,
         seed: int = DEFAULT_SEED,
-        max_tokens: int = 1_024,
+        max_tokens: int = 1_536,
+        temperature: float = 0.0,
         metrics: Any | None = None,
         recording: APIRecordingStore | None = None,
+        budget: RuntimeBudget | None = None,
     ) -> None:
         local = _load_local_settings()
         def get(name: str, default: str = "") -> str:
@@ -71,14 +75,14 @@ class ModelClient:
             get("LLM_BASE_URL")
             or common_base_url
             or os.getenv("OPENAI_BASE_URL")
-            or ("https://matreshkaapi.mooo.com/v1" if local_key else "")
+            or ""
         ).rstrip("/")
         self.api_key = get("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or local_key
         self.embedding_base_url = (
-            get("EMBEDDER_BASE_URL") or common_base_url or self.base_url
+            get("EMBEDDER_BASE_URL") or self.base_url
         ).rstrip("/")
         self.reranker_base_url = (
-            get("RERANKER_BASE_URL") or common_base_url or self.base_url
+            get("RERANKER_BASE_URL") or self.base_url
         ).rstrip("/")
         self.embedding_api_key = get("EMBEDDER_API_KEY") or self.api_key
         self.reranker_api_key = get("RERANKER_API_KEY") or self.api_key
@@ -89,12 +93,14 @@ class ModelClient:
             or ("deepseek-v4.1-flash" if local_key else "deepseek/deepseek-v4.1-flash")
         )
         self.embedding_model = get("EMB_MODEL", "baai/bge-m3")
-        self.reranker_model = get("RERANKER_MODEL", "cohere/rerank-5-fast")
+        self.reranker_model = get("RERANKER_MODEL", "qwen/qwen3-reranker-8b")
         self.timeout = timeout
         self.seed = seed
         self.max_tokens = max_tokens
+        self.temperature = temperature
         self.metrics = metrics
         self.recording = recording or APIRecordingStore.from_env()
+        self.budget = budget
 
     def _request(
         self,
@@ -114,23 +120,61 @@ class ModelClient:
         )
         if self.recording.mode == "replay":
             return self.recording.load(key)
+        started = perf_counter()
+        retries = 0
+        error: Exception | None = None
         try:
             if not base_url or not api_key:
                 raise RuntimeError(f"не заданы URL или ключ API для {service}")
-            response = httpx.post(
-                f"{base_url}/{endpoint.lstrip('/')}",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
+            for attempt in range(3):
+                timeout = (
+                    self.budget.network_timeout(self.timeout)
+                    if self.budget is not None
+                    else self.timeout
+                )
+                response = httpx.post(
+                    f"{base_url}/{endpoint.lstrip('/')}",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=payload,
+                    timeout=timeout,
+                )
+                try:
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code
+                    if attempt >= 2 or status not in {429, 500, 502, 503, 504}:
+                        raise
+                    retries += 1
+                    retry_after = exc.response.headers.get("Retry-After", "")
+                    try:
+                        delay = max(0.0, min(2.0, float(retry_after)))
+                    except ValueError:
+                        delay = 0.25 * (2**attempt)
+                    if self.budget is not None:
+                        self.budget.require(service, delay)
+                    sleep(delay)
             data = response.json()
             if not isinstance(data, dict):
                 raise ValueError(f"API {service} вернул JSON не в виде объекта")
         except Exception as exc:
+            error = exc
             if self.recording.mode == "record":
                 self.recording.save_error(key, exc, service=service, stage=stage)
             raise
+        finally:
+            if self.metrics is not None:
+                self.metrics.record(
+                    "api",
+                    stage,
+                    service=service,
+                    duration_ms=round((perf_counter() - started) * 1000, 3),
+                    request_count=1,
+                    error_count=int(error is not None),
+                    retry_count=retries,
+                    error_type=type(error).__name__ if error is not None else None,
+                    http_status=getattr(getattr(error, "response", None), "status_code", None),
+                )
         if self.recording.mode == "record":
             self.recording.save_response(key, data, service=service, stage=stage)
         return data
@@ -148,7 +192,7 @@ class ModelClient:
                 "chat/completions",
                 {
                     "model": self.llm_model,
-                    "temperature": 0,
+                    "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
                     "messages": [
                         {"role": "system", "content": system_prompt},
