@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+import asyncio
 from uuid import UUID
 
 from core.contracts import (
@@ -44,7 +45,7 @@ from core.contracts import (
     VerificationResultV1,
     VectorSearch,
 )
-from core.retrieval.evidence import build_evidence
+from core.retrieval.evidence import EvidenceSelection, build_evidence
 from core.retrieval.rerank import rerank_candidates
 from core.retrieval.search import HybridRetriever
 
@@ -88,6 +89,7 @@ class PipelineOutcome:
     generation: GenerationResultV1 | None = None
     verification: VerificationResultV1 | None = None
     evidence: list[Evidence] = field(default_factory=list)
+    missing_facts: list[str] = field(default_factory=list)
 
     @property
     def succeeded(self) -> bool:
@@ -129,7 +131,7 @@ class LegalPipeline:
 
     def collect_evidence(
         self, *, generation_id: UUID, analysis: AnalysisResultV1
-    ) -> list[Evidence]:
+    ) -> EvidenceSelection:
         """Точные кандидаты → BM25 + вектор → RRF → переранжирование → реестр ``E###``."""
         search = HybridRetriever(
             self._adapters.documents,
@@ -159,13 +161,12 @@ class LegalPipeline:
             top_n=self._config.reranker_top_n,
         )
 
-        selection = build_evidence(
+        return build_evidence(
             documents=self._adapters.documents,
             mandatory=outcome.mandatory,
             ranked=[chunk_id for chunk_id, _score in ranked],
             requested_facts=analysis.requested_facts,
         )
-        return selection.evidence
 
     # --- Этап 4: генерация --------------------------------------------
 
@@ -194,7 +195,119 @@ class LegalPipeline:
         corpus_id: UUID,
     ) -> PipelineOutcome:
         """Сквозной запуск. Технические ошибки не превращаются в юридический отказ."""
-        raise NotImplementedError("оркестрация этапов и повторная проверка")
+        request_id = UUID(int=conversation_id.int ^ corpus_id.int)
+        try:
+            generation_id = self._adapters.documents.current_generation(corpus_id)
+            analysis = self.analyze(
+                conversation_id=conversation_id,
+                current_message=current_message,
+                current_date=current_date,
+            )
+            selection = self.collect_evidence(
+                generation_id=generation_id,
+                analysis=analysis,
+            )
+            evidence = selection.evidence
+            generation_request = GenerationRequestV1(
+                question=analysis.standalone_question,
+                requested_facts=analysis.requested_facts,
+                temporal_context=TemporalContext(
+                    event_date=self._adapters.contexts.load_context(conversation_id).event_date,
+                    applicability_unknown=False,
+                ),
+                evidence=evidence,
+            )
+            generation = self.generate(generation_request)
+            if selection.missing_facts:
+                generation = generation.model_copy(
+                    update={
+                        "missing_information": list(
+                            dict.fromkeys(
+                                [*generation.missing_information, *selection.missing_facts]
+                            )
+                        )
+                    }
+                )
+            verification_request = VerificationRequestV1(
+                question=analysis.standalone_question,
+                requested_facts=analysis.requested_facts,
+                generation=generation,
+                evidence=evidence,
+            )
+            verification = self.verify(verification_request)
+
+            if verification.verdict != "pass" and self._config.allow_one_repair:
+                generation = self.repair(verification_request)
+                if selection.missing_facts:
+                    generation = generation.model_copy(
+                        update={
+                            "missing_information": list(
+                                dict.fromkeys(
+                                    [
+                                        *generation.missing_information,
+                                        *selection.missing_facts,
+                                    ]
+                                )
+                            )
+                        }
+                    )
+                verification_request = verification_request.model_copy(
+                    update={"generation": generation}
+                )
+                verification = self.verify(verification_request)
+
+            if verification.verdict != "pass":
+                return PipelineOutcome(
+                    analysis=analysis,
+                    generation=generation,
+                    verification=verification,
+                    evidence=evidence,
+                    missing_facts=selection.missing_facts,
+                    failure=TechnicalFailure(
+                        error_code="invalid_model_output",
+                        message=f"проверка ответа не пройдена: {verification.verdict}",
+                        request_id=str(request_id),
+                    ),
+                )
+
+            answer_id = self._adapters.answers.save_answer(
+                RenderedAnswerV1(
+                    answer_id=str(request_id),
+                    legal_status=generation.legal_status,
+                    verification_status="passed",
+                    missing_information=generation.missing_information,
+                    clarification_question=generation.clarification_question,
+                )
+            )
+            claims = [
+                (segment.claim_id, segment.evidence_ids)
+                for block in generation.blocks
+                for segment in block.segments
+            ]
+            rendered = self._adapters.citations.resolve(answer_id, claims)
+            rendered = rendered.model_copy(
+                update={
+                    "missing_information": generation.missing_information,
+                    "clarification_question": generation.clarification_question,
+                }
+            )
+            return PipelineOutcome(
+                answer=rendered,
+                analysis=analysis,
+                generation=generation,
+                verification=verification,
+                evidence=evidence,
+                missing_facts=selection.missing_facts,
+            )
+        except Exception as exc:  # граница конвейера: одна строка не роняет весь пакет
+            code = "timeout" if isinstance(exc, TimeoutError) else "internal_error"
+            return PipelineOutcome(
+                failure=TechnicalFailure(
+                    error_code=code,
+                    message=str(exc),
+                    request_id=str(request_id),
+                )
+            )
 
     async def run_async(
         self,
@@ -205,7 +318,13 @@ class LegalPipeline:
         corpus_id: UUID,
     ) -> PipelineOutcome:
         """Асинхронная обёртка, используемая worker-процессом."""
-        raise NotImplementedError("асинхронный запуск поверх run()")
+        return await asyncio.to_thread(
+            self.run,
+            conversation_id=conversation_id,
+            current_message=current_message,
+            current_date=current_date,
+            corpus_id=corpus_id,
+        )
 
 
 def _verified(entity: EntityValue | None) -> str | None:
