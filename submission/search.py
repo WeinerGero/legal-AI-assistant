@@ -202,6 +202,7 @@ class HybridIndex:
             started,
             candidates_count=len({int(item) for item in bm_ids[0] if item >= 0}),
         )
+        self.client.recording.checkpoint("rag.bm25", bm_ids[0].tolist())
 
         started = perf_counter()
         try:
@@ -229,6 +230,7 @@ class HybridIndex:
             started,
             candidates_count=len({int(item) for item in vec_ids[0] if item >= 0}),
         )
+        self.client.recording.checkpoint("rag.faiss", vec_ids[0].tolist())
 
         started = perf_counter()
         scores: dict[int, float] = {}
@@ -238,6 +240,7 @@ class HybridIndex:
                     scores[index] = scores.get(index, 0.0) + 1.0 / (60 + rank)
         candidates = sorted(scores, key=lambda index: (-scores[index], index))[:top_k]
         self._record_rag("fusion", started, candidates_count=len(candidates))
+        self.client.recording.checkpoint("rag.fusion", candidates)
 
         started = perf_counter()
         try:
@@ -261,6 +264,17 @@ class HybridIndex:
             candidates_count=len(candidates),
             selected_fragments_count=len(result),
             unique_sources_count=len({fragment.source for fragment in result}),
+        )
+        self.client.recording.checkpoint(
+            "rag.rerank",
+            [
+                {
+                    "candidate_index": index,
+                    "source": self.fragments[candidates[index]].source,
+                    "section": self.fragments[candidates[index]].section,
+                }
+                for index, _score in reranked
+            ],
         )
         return result
 

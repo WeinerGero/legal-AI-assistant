@@ -103,29 +103,35 @@ def main(argv: list[str] | None = None) -> int:
     questions_path = config.data_dir / "questions.csv"
     knowledge_path = config.data_dir / "knowledge-base.zip"
     output_path = Path(args[0]) if args else Path("submission.csv")
-    index_dir = Path(os.environ.get("INDEX_DIR", Path(__file__).resolve().parent))
+    module_dir = Path(__file__).resolve().parent
+    bundled_index_dir = (
+        module_dir
+        if (module_dir / "index.faiss").is_file()
+        else module_dir / "assets" / "bge_m3"
+    )
+    index_dir = Path(os.environ.get("INDEX_DIR", bundled_index_dir))
     client = ModelClient(seed=config.seed, max_tokens=config.max_tokens, metrics=metrics)
+    run_config = {
+        "seed": config.seed,
+        "models": {
+            "llm": client.llm_model,
+            "embedding": client.embedding_model,
+            "reranker": client.reranker_model,
+        },
+        "parameters": {
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "top_k": config.top_k,
+            "reranker_top_n": config.reranker_top_n,
+        },
+        "checksums": {
+            name: _sha256_or_none(index_dir / name)
+            for name in ("index.faiss", "chunks.json", "manifest.json")
+        },
+    }
+    client.recording.checkpoint("run.config", run_config)
     if metrics is not None:
-        metrics.record_config(
-            {
-                "seed": config.seed,
-                "models": {
-                    "llm": client.llm_model,
-                    "embedding": client.embedding_model,
-                    "reranker": client.reranker_model,
-                },
-                "parameters": {
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                    "top_k": config.top_k,
-                    "reranker_top_n": config.reranker_top_n,
-                },
-                "checksums": {
-                    name: _sha256_or_none(index_dir / name)
-                    for name in ("index.faiss", "chunks.json", "manifest.json")
-                },
-            }
-        )
+        metrics.record_config(run_config)
     try:
         questions = read_questions(questions_path)
         index_started = perf_counter()
@@ -160,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         for question_id, question in questions:
             if metrics is not None:
                 metrics.set_question(question_id)
+            client.recording.set_question(question_id)
             try:
                 answer = pipeline.run(question)
             except Exception as exc:
@@ -168,13 +175,21 @@ def main(argv: list[str] | None = None) -> int:
             rows.append((question_id, answer))
         if metrics is not None:
             metrics.set_question(None)
+        client.recording.set_question(None)
         write_submission(output_path, rows)
         validate_submission(output_path, [question_id for question_id, _question in questions])
+        client.recording.checkpoint(
+            "submission.csv", {"sha256": _sha256_or_none(output_path)}
+        )
         return 0
     finally:
-        if metrics is not None:
-            metrics.set_question(None)
-            metrics.finalize()
+        try:
+            client.recording.set_question(None)
+            client.recording.finalize()
+        finally:
+            if metrics is not None:
+                metrics.set_question(None)
+                metrics.finalize()
 
 
 def _sha256_or_none(path: Path) -> str | None:

@@ -56,6 +56,7 @@ class SubmissionPipeline:
                 }
                 for number, item in enumerate(fragments, 1)
             ]
+            self.client.recording.checkpoint("evidence.order", evidence)
             generation_payload = json.dumps(
                 {
                     "question": standalone,

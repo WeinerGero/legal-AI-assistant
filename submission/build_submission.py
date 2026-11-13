@@ -19,6 +19,7 @@ FLATTENED_MODULES: tuple[str, ...] = (
     "submission/metrics.py",
     "submission/search.py",
     "submission/pipeline.py",
+    "submission/recording.py",
 )
 
 PROMPT_FILES: tuple[str, ...] = (
@@ -29,10 +30,10 @@ PROMPT_FILES: tuple[str, ...] = (
 )
 
 ASSET_FILES: dict[str, str] = {
-    "requirements.txt": "data/organizers/requirements.txt",
-    "index.faiss": "data/index/bge_m3/index.faiss",
-    "chunks.json": "data/index/bge_m3/chunks.json",
-    "manifest.json": "data/index/bge_m3/manifest.json",
+    "requirements.txt": "submission/assets/requirements.txt",
+    "index.faiss": "submission/assets/bge_m3/index.faiss",
+    "chunks.json": "submission/assets/bge_m3/chunks.json",
+    "manifest.json": "submission/assets/bge_m3/manifest.json",
 }
 
 

@@ -13,8 +13,10 @@ import httpx
 
 try:
     from core.reproducibility import DEFAULT_SEED
+    from submission.recording import APIRecordingStore
 except ImportError:  # плоский корень submission.zip
     from reproducibility import DEFAULT_SEED
+    from recording import APIRecordingStore
 
 
 def _load_local_settings() -> dict[str, str]:
@@ -56,6 +58,7 @@ class ModelClient:
         seed: int = DEFAULT_SEED,
         max_tokens: int = 1_500,
         metrics: Any | None = None,
+        recording: APIRecordingStore | None = None,
     ) -> None:
         local = _load_local_settings()
         def get(name: str, default: str = "") -> str:
@@ -90,6 +93,7 @@ class ModelClient:
         self.seed = seed
         self.max_tokens = max_tokens
         self.metrics = metrics
+        self.recording = recording or APIRecordingStore.from_env()
 
     def _request(
         self,
@@ -99,17 +103,36 @@ class ModelClient:
         base_url: str,
         api_key: str,
         service: str,
+        stage: str,
     ) -> dict:
-        if not base_url or not api_key:
-            raise RuntimeError(f"не заданы URL или ключ API для {service}")
-        response = httpx.post(
-            f"{base_url}/{endpoint.lstrip('/')}",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=payload,
-            timeout=self.timeout,
+        key = self.recording.request_key(
+            service=service,
+            stage=stage,
+            endpoint=endpoint,
+            payload=payload,
         )
-        response.raise_for_status()
-        return response.json()
+        if self.recording.mode == "replay":
+            return self.recording.load(key)
+        try:
+            if not base_url or not api_key:
+                raise RuntimeError(f"не заданы URL или ключ API для {service}")
+            response = httpx.post(
+                f"{base_url}/{endpoint.lstrip('/')}",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=payload,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError(f"API {service} вернул JSON не в виде объекта")
+        except Exception as exc:
+            if self.recording.mode == "record":
+                self.recording.save_error(key, exc, service=service, stage=stage)
+            raise
+        if self.recording.mode == "record":
+            self.recording.save_response(key, data, service=service, stage=stage)
+        return data
 
     def complete_json(
         self, system_prompt: str, payload: str, *, stage: str = "unspecified"
@@ -136,6 +159,7 @@ class ModelClient:
                 base_url=self.base_url,
                 api_key=self.api_key,
                 service="LLM",
+                stage=stage,
             )
             content = data["choices"][0]["message"]["content"]
         except Exception as exc:
@@ -178,6 +202,7 @@ class ModelClient:
             base_url=self.embedding_base_url,
             api_key=self.embedding_api_key,
             service="embedder",
+            stage="embeddings",
         )
         ordered = sorted(data["data"], key=lambda item: item.get("index", 0))
         return [item["embedding"] for item in ordered]
@@ -196,6 +221,7 @@ class ModelClient:
             base_url=self.reranker_base_url,
             api_key=self.reranker_api_key,
             service="reranker",
+            stage="rerank",
         )
         rows = data.get("results", data.get("data", []))
         return [
