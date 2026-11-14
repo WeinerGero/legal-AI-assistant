@@ -281,14 +281,18 @@ def _looks_like_refusal(answer: str) -> bool:
 
 
 def _looks_like_technical_refusal(answer: str) -> bool:
-    text = answer.casefold()
-    return any(
+    text = " ".join(answer.casefold().split()).rstrip(".")
+    default_refusals = {
+        "недостаточно подтверждённых данных для ответа",
+        "недостаточно подтверждённых данных в предоставленных документах",
+    }
+    return text in default_refusals or any(
         marker in text
         for marker in (
-            "техническ",
-            "technical",
+            "техническая ошибка",
+            "технический отказ",
+            "technical error",
             "не удалось обработать",
-            "недостаточно подтверждённых данных для ответа",
         )
     )
 
@@ -319,8 +323,8 @@ def _score_candidate(answer: str, annotation: dict, *, exact_documents: bool) ->
         "citation_document_coverage": _ratio(sum(document_hits), len(document_hits)),
         "citation_section_coverage": _ratio(sum(section_hits), len(section_hits)),
         "outcome": outcome,
-        "false_refusal": outcome != "success" and annotation["outcome"] == "success",
-        "missed_refusal": outcome == "success" and annotation["outcome"] == "legal_refusal",
+        "false_refusal": outcome == "legal_refusal" and annotation["outcome"] == "success",
+        "missed_refusal": outcome != "legal_refusal" and annotation["outcome"] == "legal_refusal",
     }
 
 
@@ -386,6 +390,9 @@ def _summarize_candidates(items: list[dict]) -> dict[str, Any]:
         "citation_section_coverage": _aggregate_ratios(citation_sections),
         "false_refusal_rate": _ratio(sum(item["false_refusal"] for item in items), 17),
         "missed_refusal_rate": _ratio(sum(item["missed_refusal"] for item in items), 1),
+        "technical_refusal_rate": _ratio(
+            sum(item["outcome"] == "technical_refusal" for item in items), len(items)
+        ),
         "outcomes": {
             outcome: sum(item["outcome"] == outcome for item in items)
             for outcome in ("success", "legal_refusal", "technical_refusal")

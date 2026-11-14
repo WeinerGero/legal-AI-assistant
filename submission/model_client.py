@@ -69,7 +69,11 @@ class ModelClient:
             value = (os.getenv(name) or local.get(name, "")).strip()
             return default if not value or value == name else value
 
-        local_key = get("LLM_DEV")
+        local_key = (os.getenv("LLM_DEV") or local.get("LLM_DEV", "")).strip()
+        process_api_key = (
+            os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+        ).strip()
+        local_generic_key = local.get("LLM_API_KEY", "").strip()
         common_base_url = get("BASE_URL")
         self.base_url = (
             get("LLM_BASE_URL")
@@ -77,7 +81,15 @@ class ModelClient:
             or os.getenv("OPENAI_BASE_URL")
             or ""
         ).rstrip("/")
-        self.api_key = get("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or local_key
+        local_dev_mode = self.base_url.casefold() == "https://matreshkaapi.mooo.com/v1"
+        # The dedicated development key must win for the explicitly selected
+        # local Matreshka endpoint. Organizer credentials still win everywhere
+        # else, and the competition container does not require a .env file.
+        self.api_key = (
+            local_key
+            if local_dev_mode and local_key
+            else process_api_key or local_key or local_generic_key
+        )
         self.embedding_base_url = (
             get("EMBEDDER_BASE_URL") or self.base_url
         ).rstrip("/")
