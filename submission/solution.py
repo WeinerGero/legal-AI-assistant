@@ -80,7 +80,7 @@ class RuntimeConfig:
         maximum_time = 7200.0 if dev_local else DEFAULT_TIME_LIMIT_SECONDS
         return cls(
             data_dir=Path(os.environ.get("DATA_DIR", "data")),
-            top_k=max(24, min(40, _env_int("TOP_K", 4) * 6)),
+            top_k=max(8, min(40, _env_int("TOP_K", 24))),
             reranker_top_n=max(8, min(10, _env_int("RERANKER_TOP_N", 2) * 4)),
             max_tokens=max(512, min(4096, _env_int("MAX_TOKENS", 1536))),
             temperature=_env_float("TEMPERATURE", 0.0),

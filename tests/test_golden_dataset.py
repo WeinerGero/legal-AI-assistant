@@ -13,6 +13,7 @@ GOLDEN = Path(__file__).parent / "golden" / "PSB_golden_dataset_v1.1_codex.json"
 PARTITIONS = Path(__file__).parent / "golden" / "golden_partitions.json"
 P03_RELEVANCE = Path(__file__).parent / "golden" / "p03_relevance_v1.json"
 HISTORY_RUNS = Path(__file__).parent / "golden" / "history_runs.json"
+CONTROLLED_VERIFICATION = Path(__file__).parent / "golden" / "controlled_verification_cases.json"
 EXPECTED_SHA256 = "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13"
 REQUIRED_FIELDS = {
     "id",
@@ -73,6 +74,15 @@ def test_history_manifest_keeps_partitions_versioned_and_distinct() -> None:
     assert [row["partition_id"] for row in rows] == ["P01", "P02", "P03"]
     assert len({row["run_id"] for row in rows}) == len(rows)
     assert all(len(row["commit"]) == 40 for row in rows)
+
+
+def test_controlled_verification_set_is_complete_and_independent() -> None:
+    payload = json.loads(CONTROLLED_VERIFICATION.read_text(encoding="utf-8"))
+    cases = payload["cases"]
+    assert len(cases) == 8
+    assert len({case["id"] for case in cases}) == 8
+    assert {case["verdict"] for case in cases} == {"pass", "revision_required"}
+    assert "DeepSeek" not in payload["methodology"]
 
 
 def test_partition_persists_each_case_before_a_later_interruption(

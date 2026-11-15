@@ -341,12 +341,7 @@ class HybridIndex:
                 print(f"Недоступен смысловой поиск: {type(exc).__name__}", file=sys.stderr)
 
         started = perf_counter()
-        scores: dict[int, float] = {}
-        for rankings in (bm_rankings, vec_rankings):
-            for ranking in rankings:
-                for rank, index in enumerate(ranking, 1):
-                    scores[index] = scores.get(index, 0.0) + 1.0 / (len(rankings) * (60 + rank))
-        candidates = sorted(scores, key=lambda i: (-scores[i], i))[:top_k]
+        candidates = _fuse_rankings(bm_rankings, vec_rankings, top_k)
         self._record_rag("fusion", started, candidates_count=len(candidates),
                          bm25_faiss_overlap=len(bm_set & vec_set) / len(bm_set | vec_set) if bm_set | vec_set else 0,
                          unique_documents_count=len({self.fragments[i].source for i in candidates}),
@@ -724,3 +719,36 @@ def _ranked_fragment_ids(rankings: list[list[int]], fragments: list[Fragment]) -
                 result.append(identifier)
                 seen.add(identifier)
     return result
+
+
+def _fuse_rankings(
+    bm_rankings: list[list[int]], vec_rankings: list[list[int]], top_k: int
+) -> list[int]:
+    """Deterministic RRF variants for diagnostics; default preserves 0.5/0.5 RRF."""
+    mode = os.environ.get("RRF_MODE", "weighted").strip().casefold()
+    if mode == "faiss":
+        channels = [(vec_rankings, 1.0)]
+    else:
+        bm_weight = float(os.environ.get("RRF_BM25_WEIGHT", "0.5"))
+        faiss_weight = float(os.environ.get("RRF_FAISS_WEIGHT", str(1.0 - bm_weight)))
+        channels = [(bm_rankings, bm_weight), (vec_rankings, faiss_weight)]
+    if mode == "diverse" and bm_rankings and vec_rankings:
+        interleaved: list[int] = []
+        seen: set[int] = set()
+        for position in range(max(len(row) for row in [*bm_rankings, *vec_rankings])):
+            for ranking in (bm_rankings, vec_rankings):
+                for row in ranking:
+                    if position < len(row) and row[position] not in seen:
+                        interleaved.append(row[position])
+                        seen.add(row[position])
+                        break
+                if len(interleaved) >= top_k:
+                    return interleaved[:top_k]
+        return interleaved[:top_k]
+    scores: dict[int, float] = {}
+    for rankings, weight in channels:
+        query_count = max(1, len(rankings))
+        for ranking in rankings:
+            for rank, index in enumerate(ranking, 1):
+                scores[index] = scores.get(index, 0.0) + weight / (query_count * (60 + rank))
+    return sorted(scores, key=lambda index: (-scores[index], index))[:top_k]

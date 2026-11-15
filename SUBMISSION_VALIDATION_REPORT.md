@@ -1,6 +1,6 @@
 # Submission validation report
 
-Latest rebuild after P03: `artifacts/PSB_submission.zip`, 4,281,137 bytes.
+Latest rebuild after component-quality changes: `artifacts/PSB_submission.zip`, 4,282,127 bytes.
 The archive contains 11 root files, compiles after extraction into an isolated
 temporary directory, and contains no Golden, judge, evaluation, backend-example,
 secret, log, or development files. The builder still emits ordinary
@@ -15,8 +15,8 @@ inside the competition archive.
 ## Archive
 
 - Path: `PSB_submission.zip`
-- Size: 4,281,137 bytes (below 128 MiB)
-- SHA-256: `4DE3263927D58AD9B3A0E3FF85B5A832FE0A376C1D498178EDFFDAAF3FE0D3F5`.
+- Size: 4,282,127 bytes (below 128 MiB)
+- SHA-256: `F8E8E01A2BEFD7CBA9292F06AAE67CD3C4B019EB370ED3213B1A756482ECD12B`.
 - Files: `solution.py`, `requirements.txt`, required flat runtime modules,
   embedded index, and embedded prompts only.
 - Golden data, tests, reports, logs, `.env`, secrets, development helpers, and

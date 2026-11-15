@@ -8,6 +8,7 @@ from submission.pipeline import (
     _normalize_verification,
     _render_verified_partial_answer,
     _revision_scope,
+    _select_evidence_records,
     _validate_decimal_calculations,
     _validate_generation,
     _validate_public_answer,
@@ -286,4 +287,18 @@ def test_missing_verdict_is_derived_conservatively() -> None:
     requirements = [{"fact_id": "F001", "description": "факт"}]
     _normalize_verification(verification, generation, requirements)
     assert verification["verdict"] == "pass"
+
+
+def test_evidence_selection_preserves_fact_diversity_without_gold_labels() -> None:
+    records = [
+        {"evidence_id": "E001", "text": "общий договор срок оплаты", "section": "1", "document": "a"},
+        {"evidence_id": "E002", "text": "договор лимит ответственности 50 процентов", "section": "2", "document": "a"},
+        {"evidence_id": "E003", "text": "повторный договор срок оплаты", "section": "3", "document": "a"},
+    ]
+    selected = _select_evidence_records(
+        records,
+        [{"fact_id": "F001", "description": "срок оплаты"}, {"fact_id": "F002", "description": "лимит ответственности"}],
+        2,
+    )
+    assert [item["evidence_id"] for item in selected] == ["E001", "E002"]
 

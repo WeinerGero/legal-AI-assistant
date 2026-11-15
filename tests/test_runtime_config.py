@@ -17,3 +17,9 @@ def test_dev_local_may_measure_longer_than_competition(monkeypatch) -> None:
     monkeypatch.setenv("SUPERVISOR_TIMEOUT_SECONDS", "7220")
     assert RuntimeConfig.from_env().time_limit_seconds == 7200.0
     assert _supervisor_timeout() == 7220.0
+
+
+def test_top_k_is_read_directly_without_hidden_multiplier(monkeypatch) -> None:
+    monkeypatch.delenv("RAG_RUNTIME_MODE", raising=False)
+    monkeypatch.setenv("TOP_K", "30")
+    assert RuntimeConfig.from_env().top_k == 30

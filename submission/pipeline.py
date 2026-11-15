@@ -75,8 +75,9 @@ class SubmissionPipeline:
                 fact_descriptions=[item["description"] for item in fact_requirements],
             )
             fragments = self.index.search_queries(
-                lexical, semantic, top_k=self.top_k, final_k=self.evidence_k
+                lexical, semantic, top_k=self.top_k, final_k=max(self.evidence_k, self.top_k)
             )
+            fragments = _select_evidence_fragments(fragments, fact_requirements, self.evidence_k)
             stage_started = perf_counter()
             evidence = [
                 {
@@ -121,6 +122,7 @@ class SubmissionPipeline:
                     evidence = self._expanded_evidence_search(
                         standalone, verification, evidence, fact_requirements
                     )
+                    evidence = _select_evidence_records(evidence, fact_requirements, self.evidence_k)
                     generation_request["evidence"] = evidence
                 generation = self._generate(
                     {
@@ -211,8 +213,20 @@ class SubmissionPipeline:
                 reserve_seconds=RECOVERY_MIN_REMAINING_SECONDS,
             )
         messages = parse_conversation(question)
-        last_question = next((item["content"] for item in reversed(messages) if item["role"] == "user"), question)
-        fragments = self.index.search(last_question, top_k=18, final_k=6)
+        analysis = self._json(
+            self.client.complete_json(
+                self.analysis_prompt,
+                json.dumps({"messages": messages}, ensure_ascii=False),
+                stage="analysis_recovery",
+            )
+        )
+        _validate_analysis(analysis)
+        fact_requirements = _fact_requirements(analysis["requested_facts"])
+        lexical = [analysis["standalone_question"], *analysis["lexical_queries"]]
+        semantic = analysis["semantic_queries"] or [analysis["standalone_question"]]
+        fragments = self.index.search_queries(
+            lexical, semantic, top_k=max(18, self.top_k), final_k=max(6, self.top_k)
+        )
         evidence = [
             {
                 "evidence_id": f"E{number:03d}",
@@ -225,23 +239,20 @@ class SubmissionPipeline:
             }
             for number, item in enumerate(fragments, 1)
         ]
-        target_language = _question_language(last_question)
-        analysis = {
-            "target_language": target_language,
-            "standalone_question": last_question,
-            "requested_facts": [],
-        }
+        target_language = analysis["target_language"]
+        evidence = _select_evidence_records(evidence, fact_requirements, max(6, self.evidence_k))
         generation = self._generate(
             {
                 "mode": "recovery",
                 "target_language": target_language,
-                "question": last_question,
-                "requested_facts": [],
+                "question": analysis["standalone_question"],
+                "requested_facts": analysis["requested_facts"],
+                "fact_requirements": fact_requirements,
                 "evidence": evidence,
             },
             evidence,
         )
-        verification = self._verify(messages, analysis, generation, evidence)
+        verification = self._verify(messages, analysis, generation, evidence, fact_requirements=fact_requirements)
         if verification["verdict"] == "pass":
             result = _render_citations(
                 generation,
@@ -378,7 +389,7 @@ class SubmissionPipeline:
         if not missing:
             return evidence
         fragments = self.index.search_queries(
-            [standalone, *missing], missing, top_k=self.top_k, final_k=self.evidence_k
+            [standalone, *missing], missing, top_k=self.top_k, final_k=max(self.evidence_k, self.top_k)
         )
         merged: list[dict] = []
         seen: set[tuple[str, str, str]] = set()
@@ -912,6 +923,61 @@ def _fact_requirements(requested_facts: list[object]) -> list[dict[str, str]]:
                 "description": description,
             })
     return requirements
+
+
+def _select_evidence_fragments(
+    fragments: list[object], fact_requirements: list[dict], limit: int
+) -> list[object]:
+    """Select a bounded, diverse evidence set using conservative lexical coverage.
+
+    This is only a candidate-diversity heuristic: token overlap never establishes
+    legal support and the verifier remains authoritative.
+    """
+    if len(fragments) <= limit or not fact_requirements:
+        return fragments[:limit]
+    tokenized = [set(_evidence_tokens(getattr(item, "text", ""))) for item in fragments]
+    needs = [set(_evidence_tokens(item.get("description", ""))) for item in fact_requirements]
+    covered: set[int] = set()
+    selected: list[int] = []
+    remaining = set(range(len(fragments)))
+    while remaining and len(selected) < limit:
+        best = max(
+            remaining,
+            key=lambda index: (
+                len({need for need, terms in enumerate(needs) if terms and terms & tokenized[index]} - covered),
+                -index,
+            ),
+        )
+        newly = {need for need, terms in enumerate(needs) if terms and terms & tokenized[best]}
+        if not newly and selected:
+            break
+        selected.append(best)
+        covered.update(newly)
+        remaining.remove(best)
+    selected.extend(index for index in range(len(fragments)) if index not in selected)
+    return [fragments[index] for index in selected[:limit]]
+
+
+def _select_evidence_records(records: list[dict], fact_requirements: list[dict], limit: int) -> list[dict]:
+    class _Record:
+        def __init__(self, text: str) -> None:
+            self.text = text
+    selected = _select_evidence_fragments(
+        [_Record(str(record.get("text", ""))) for record in records], fact_requirements, limit
+    )
+    used: set[int] = set()
+    indices = []
+    for chosen in selected:
+        for index, record in enumerate(records):
+            if index not in used and str(record.get("text", "")) == chosen.text:
+                indices.append(index)
+                used.add(index)
+                break
+    return [records[index] for index in indices]
+
+
+def _evidence_tokens(value: str) -> list[str]:
+    return re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", str(value).casefold())
 
 
 def _evidence_trace_id(item: dict) -> str:
