@@ -79,6 +79,7 @@ class ConversationUpdate(InputModel):
 
 class MessageInput(InputModel):
     content: str = Field(min_length=1, max_length=20_000)
+    context: QuestionContext
 
     @field_validator("content")
     @classmethod
@@ -374,6 +375,20 @@ def send_message(
         .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(6)
     ).all()
+    context_data = conversation.context_json or {}
+    new_context = payload.context.model_dump(mode="json")
+    previous_context = {
+        "active_document": context_data.get("active_document"),
+        "event_date": context_data.get("event_date"),
+    }
+    context_revision = int(context_data.get("context_revision", 1))
+    if previous_context != new_context:
+        context_revision += 1
+    conversation.context_json = {
+        **context_data,
+        **new_context,
+        "context_revision": context_revision,
+    }
 
     user_message = Message(
         conversation_id=conversation_id,
@@ -412,23 +427,18 @@ def send_message(
             content=failure.model_dump(mode="json"),
         )
 
-    context_data = conversation.context_json or {}
-    context = QuestionContext(
-        active_document=context_data.get("active_document"),
-        event_date=context_data.get("event_date"),
-    )
     model_request = ModelQuestion(
         schema_version="1.0",
         request_id=f"req-{uuid4()}",
         question=payload.content,
-        context=context,
+        context=payload.context,
         recent_messages=[
             RecentMessage(role=item.role, content=item.content) for item in reversed(recent)
         ],
         summary=context_data.get("summary"),
         corpus_id=corpus_id,
         index_generation_id=index_generation_id,
-        context_revision=context_data.get("context_revision", 1),
+        context_revision=context_revision,
     )
 
     try:
