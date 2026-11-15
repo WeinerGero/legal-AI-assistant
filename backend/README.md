@@ -13,8 +13,9 @@ APP_USER_LOGIN=<set-me>
 APP_USER_PASSWORD=<set-me>
 ```
 
-The API is available at `http://localhost:8000`; OpenAPI docs are at `/docs`.
-After login, send the returned bearer token in the `Authorization` header.
+The API is available at `http://localhost:${API_PORT:-8001}`; OpenAPI docs are
+at `/docs`. Set `API_PORT` in `.env` to override the host port. After login,
+send the returned bearer token in the `Authorization` header.
 Main routes are `/api/v1/auth/*`, `/api/v1/conversations`, and
 `/api/v1/conversations/{id}/messages`.
 
