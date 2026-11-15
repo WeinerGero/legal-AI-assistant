@@ -29,7 +29,7 @@ try:
     from submission.metrics import MetricsRecorder
     from submission.pipeline import SubmissionPipeline
     from submission.recording import ReplayMismatchError
-    from submission.search import HybridIndex, load_fragments
+    from submission.search import HybridIndex, RequiredLocalServiceError, load_fragments
 except ImportError:  # плоский корень submission.zip
     from budget import BudgetExceededError, RuntimeBudget
     from reproducibility import DEFAULT_SEED, configure_reproducibility
@@ -37,7 +37,7 @@ except ImportError:  # плоский корень submission.zip
     from metrics import MetricsRecorder
     from pipeline import SubmissionPipeline
     from recording import ReplayMismatchError
-    from search import HybridIndex, load_fragments
+    from search import HybridIndex, RequiredLocalServiceError, load_fragments
 
 try:
     from submission.embedded_index import unpack
@@ -321,6 +321,10 @@ def _worker_main(argv: list[str] | None = None) -> int:
             except ReplayMismatchError:
                 raise
             except Exception as exc:
+                if os.environ.get("RAG_RUNTIME_MODE", "").strip().upper() == "DEV_LOCAL":
+                    raise RequiredLocalServiceError(
+                        "DEV_LOCAL requires the verified bundled FAISS index"
+                    ) from exc
                 print(f"Готовый индекс недоступен: {type(exc).__name__}: {exc}", file=sys.stderr)
                 index_mode = "bm25_fallback"
                 index = HybridIndex.bm25_only(load_fragments(knowledge_path), client)
@@ -375,6 +379,8 @@ def _worker_main(argv: list[str] | None = None) -> int:
                     except BudgetExceededError as exc:
                         terminal_error = type(exc).__name__
                         answer = DEFAULT_FAILURE_ANSWER
+                    except RequiredLocalServiceError:
+                        raise
                     except Exception as exc:
                         terminal_error = type(exc).__name__
                         print(f"Вопрос {question_id}: {type(exc).__name__}: {exc}", file=sys.stderr)

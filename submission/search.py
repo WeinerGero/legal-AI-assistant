@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 import io
@@ -28,6 +29,10 @@ CLAUSE = re.compile(r"(?m)(?=^(?:статья|раздел|глава|пункт
 DATE = re.compile(r"\b\d{2}[./-]\d{2}[./-]\d{4}\b")
 RELATION = re.compile(r"(?i)\b(изменяет|дополняет|заменяет|отменяет|утратил силу)\b")
 INDEX_MEMBERS = frozenset({"index.faiss", "chunks.json", "manifest.json"})
+
+
+class RequiredLocalServiceError(RuntimeError):
+    """A mandatory DEV_LOCAL model or index is unavailable or incompatible."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +312,10 @@ class HybridIndex:
                 raise
             except Exception as exc:
                 self._record_rag("embeddings", started, error=exc, request_count=1, query_count=len(semantic))
+                if os.environ.get("RAG_RUNTIME_MODE", "").strip().upper() == "DEV_LOCAL":
+                    raise RequiredLocalServiceError(
+                        "DEV_LOCAL requires working BGE-M3 and FAISS search"
+                    ) from exc
                 print(f"Недоступен смысловой поиск: {type(exc).__name__}", file=sys.stderr)
 
         started = perf_counter()
@@ -342,6 +351,10 @@ class HybridIndex:
         except ReplayMismatchError:
             raise
         except Exception as exc:
+            if os.environ.get("RAG_RUNTIME_MODE", "").strip().upper() == "DEV_LOCAL":
+                raise RequiredLocalServiceError(
+                    "DEV_LOCAL requires working Qwen3 reranking"
+                ) from exc
             fallback = True
             error = exc
             selected = [(i, None) for i in range(min(final_k, len(candidates)))]
