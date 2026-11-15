@@ -725,7 +725,7 @@ def _fuse_rankings(
     bm_rankings: list[list[int]], vec_rankings: list[list[int]], top_k: int
 ) -> list[int]:
     """Deterministic RRF variants for diagnostics; default preserves 0.5/0.5 RRF."""
-    mode = os.environ.get("RRF_MODE", "weighted").strip().casefold()
+    mode = os.environ.get("RRF_MODE", "faiss").strip().casefold()
     if mode == "faiss":
         channels = [(vec_rankings, 1.0)]
     else:
