@@ -77,7 +77,7 @@ class RuntimeConfig:
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
         dev_local = os.environ.get("RAG_RUNTIME_MODE", "").strip().upper() == "DEV_LOCAL"
-        maximum_time = 3600.0 if dev_local else DEFAULT_TIME_LIMIT_SECONDS
+        maximum_time = 7200.0 if dev_local else DEFAULT_TIME_LIMIT_SECONDS
         return cls(
             data_dir=Path(os.environ.get("DATA_DIR", "data")),
             top_k=max(24, min(40, _env_int("TOP_K", 4) * 6)),
@@ -272,7 +272,7 @@ def _supervisor_timeout() -> float:
     except (TypeError, ValueError):
         configured = SUPERVISOR_TIMEOUT_SECONDS
     dev_local = os.environ.get("RAG_RUNTIME_MODE", "").strip().upper() == "DEV_LOCAL"
-    maximum = 3620.0 if dev_local else SUPERVISOR_TIMEOUT_SECONDS
+    maximum = 7220.0 if dev_local else SUPERVISOR_TIMEOUT_SECONDS
     return max(1.0, min(maximum, configured))
 
 
