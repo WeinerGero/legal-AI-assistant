@@ -10,11 +10,11 @@ corpus spans to the strict backend `CoreResult` contract.
 - Docker Desktop with `host.docker.internal` support;
 - BGE-M3 at `http://127.0.0.1:8081/v1/embeddings`;
 - Qwen3 reranker at `http://127.0.0.1:8080/v1/rerank`;
-- a corpus ZIP matching `submission/assets/bge_m3/manifest.json`;
 - the existing database/login variables plus `LLM_API_KEY` in the process environment.
 
-Do not put secrets in this repository. `RAG_CORPUS_PATH` is a host path and is mounted
-read-only. The source archive is verified against the bundled manifest during startup.
+Do not put secrets in this repository. The separate integration image packages the tracked
+`data/organizers/knowledge-base` directory into `/app/data/knowledge-base.zip` during its
+build. The resulting archive is verified against the bundled index manifest at startup.
 
 ## Start
 
@@ -22,7 +22,6 @@ From the repository root in PowerShell:
 
 ```powershell
 $env:FRONTEND_PORT = '8082'
-$env:RAG_CORPUS_PATH = 'C:\absolute\path\knowledge-base.zip'
 docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml config
 docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml up --build
 ```

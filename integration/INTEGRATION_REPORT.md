@@ -29,10 +29,10 @@ identity; they are not represented as organizer identifiers.
 
 ## Operational limits
 
-The integration does not bundle the private corpus and never reads or copies `.env` into
-the image. Real end-to-end model checks require the corpus ZIP, model services and secret
-environment variables at runtime. A technical model/service failure remains a technical
-failure and is not converted to `insufficient_evidence`.
+The integration packages the 21 tracked organizer documents into its separate image but
+never reads or copies `.env` into the image. Real end-to-end model checks require model
+services and secret environment variables at runtime. A technical model/service failure
+remains a technical failure and is not converted to `insufficient_evidence`.
 
 Final test, timing, Compose reachability and integrity results are recorded in the commit
 handoff rather than fabricated when the external services are unavailable.
@@ -51,10 +51,10 @@ handoff rather than fabricated when the external services are unavailable.
   findings, so mypy is not reported as passing;
 - all 19 protected files match `origin/back+front` by Git tree, blob SHA and SHA-256.
 
-No real DeepSeek legal answer was generated in this run. Available corpus archives are in
-paths forbidden to the agent by repository secret/artifact rules, and no authorized clean
-corpus mount was supplied. Reporting model-answer quality or per-stage live timing without
-that run would therefore be misleading.
+No real DeepSeek legal answer was generated in the earlier run because model credentials
+were not read by the agent. Reporting model-answer quality or per-stage live timing without
+an authenticated call would be misleading. The tracked organizer corpus is now packaged
+directly by the integration image and does not require a host mount.
 
 ## Merge simulation against current dev
 
