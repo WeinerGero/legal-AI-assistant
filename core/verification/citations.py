@@ -49,7 +49,7 @@ def build_rendered_answer(
                         answer_source_id=source_id,
                         number=number,
                         document_title=record.document_title,
-                        version_label=record.section,
+                        version_label=record.version_label,
                         section_number=record.section,
                     )
             segments.append(
@@ -67,6 +67,8 @@ def build_rendered_answer(
         verification_status=verification_status,
         blocks=blocks,
         sources=sorted(sources.values(), key=lambda item: item.number),
+        missing_information=generation.missing_information,
+        clarification_question=generation.clarification_question,
     )
 
 

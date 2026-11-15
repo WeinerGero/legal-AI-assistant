@@ -1,0 +1,30 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: integration/Dockerfile
+    command: ["uvicorn", "integration.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "30"]
+    environment:
+      RAG_RUNTIME_MODE: DEV_LOCAL
+      RAG_CORPUS_PATH: /data/knowledge-base.zip
+      RAG_INDEX_DIR: /app/submission/assets/bge_m3
+      RAG_MODEL_TIMEOUT_SECONDS: "300"
+      RAG_MAX_CONCURRENCY: "1"
+      RAG_QUEUE_CAPACITY: "4"
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://matreshkaapi.mooo.com/v1}
+      EMBEDDER_BASE_URL: ${EMBEDDER_BASE_URL:-http://host.docker.internal:8081/v1}
+      RERANKER_BASE_URL: ${RERANKER_BASE_URL:-http://host.docker.internal:8080/v1}
+      LLM_API_KEY: ${LLM_API_KEY:?Set LLM_API_KEY in the environment}
+      EMBEDDER_API_KEY: ${EMBEDDER_API_KEY:-local}
+      RERANKER_API_KEY: ${RERANKER_API_KEY:-local}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${RAG_CORPUS_PATH:?Set RAG_CORPUS_PATH to knowledge-base.zip}:/data/knowledge-base.zip:ro
+
+  frontend:
+    ports: !override
+      - "${FRONTEND_PORT:-8082}:80"
+    volumes:
+      - ./integration/frontend-config.js:/usr/share/nginx/html/config.js:ro
+      - ./integration/nginx-rag.conf.template:/etc/nginx/templates/default.conf.template:ro
