@@ -3,7 +3,8 @@
 ## Archive
 
 - Path: `PSB_submission.zip`
-- Size: 4,275,916 bytes (below 128 MiB)
+- Size: 4,275,956 bytes (below 128 MiB)
+- SHA-256: `C8CD493AD2871156F2740BBEC3146BBF62A3163DC592D3E2A945C93393085423`.
 - Files: `solution.py`, `requirements.txt`, required flat runtime modules,
   embedded index, and embedded prompts only.
 - Golden data, tests, reports, logs, `.env`, secrets, development helpers, and
