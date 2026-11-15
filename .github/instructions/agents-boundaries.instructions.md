@@ -9,13 +9,13 @@ applyTo: "**"
 
 ## Границы каталогов
 
-Активный участник ветки — **Участник 1**: только `core/` и `submission/`.
-Каталоги `backend/`, `frontend/`, `worker/`, `tests/` здесь отсутствуют —
-не создавать их и не править.
+В текущей ветке по прямому разрешению владельца совмещены роли
+**Участника 1** (`core/`, `submission/`) и **Участника 3** (`tests/`).
+Каталоги `backend/`, `frontend/`, `worker/` не создавать и не править.
 
 - Участник 1: только `core/`, `submission/`.
 - Участник 2: только `backend/`, `frontend/`, `worker/`.
-- Участник 3: только `tests/`.
+- Участник 3: `tests/` в текущей ветке.
 - Общие файлы (`README.md`, `pyproject.toml`, `poetry.toml`,
   `.gitignore`, `.env.example`, `CHANGELOG.md`, `docs/ARCHITECTURE.md`) —
   только по явной команде пользователя.
