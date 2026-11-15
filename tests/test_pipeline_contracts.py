@@ -140,6 +140,31 @@ def test_pass_requires_an_explicit_check_for_every_atomic_fact(facts: list[str])
     }
 
 
+def test_fact_check_schema_aliases_are_normalized_without_promoting_missing_facts() -> None:
+    generation = {
+        "answer_type": "answer",
+        "answer": "Подтверждено. [E001]",
+        "missing_facts": [],
+        "claims": [{"claim_id": "C001", "text": "Подтверждено.", "evidence_ids": ["E001"]}],
+    }
+    verification = {
+        "verdict": "pass",
+        "claim_checks": [{"claim_id": "C001", "status": "supported", "evidence_ids": ["E001"], "reason": "ok"}],
+        "fact_checks": [
+            {"fact_id": "F001", "status": "supported", "claim_ids": ["C001"], "reason": "ok"},
+            {"fact_id": "F002", "status": "unanswered", "claim_ids": ["C999"], "reason": "missing"},
+        ],
+        "unanswered_facts": [],
+        "issues": [],
+    }
+    requirements = _fact_requirements(["first", "second"])
+    _normalize_verification(verification, generation, requirements)
+    assert verification["fact_checks"][0]["status"] == "addressed"
+    assert verification["fact_checks"][1]["status"] == "missing"
+    assert verification["fact_checks"][1]["claim_ids"] == []
+    assert verification["verdict"] == "revision_required"
+
+
 def test_supported_independent_claim_survives_a_contradicted_claim() -> None:
     generation = {
         "answer_type": "answer",

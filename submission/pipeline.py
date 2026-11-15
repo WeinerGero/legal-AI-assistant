@@ -729,10 +729,40 @@ def _normalize_verification(
         fact_checks = []
     normalized_facts: list[dict] = []
     seen_facts: set[str] = set()
+    known_claim_ids = set(claim_evidence)
+    fact_status_aliases = {
+        "addressed": "addressed",
+        "answered": "addressed",
+        "supported": "addressed",
+        "complete": "addressed",
+        "unsupported": "unsupported",
+        "partially_supported": "unsupported",
+        "insufficient_evidence": "unsupported",
+        "missing": "missing",
+        "unanswered": "missing",
+        "not_addressed": "missing",
+    }
     for check in fact_checks:
         if not isinstance(check, dict) or check.get("fact_id") not in expected_fact_ids or check.get("fact_id") in seen_facts:
             inconsistent = True
             continue
+        status = fact_status_aliases.get(str(check.get("status", "")).casefold())
+        if status is None:
+            status = "missing"
+            inconsistent = True
+        raw_claim_ids = check.get("claim_ids", [])
+        claim_ids = [
+            claim_id for claim_id in raw_claim_ids
+            if isinstance(raw_claim_ids, list) and claim_id in known_claim_ids
+        ] if isinstance(raw_claim_ids, list) else []
+        if claim_ids != raw_claim_ids:
+            inconsistent = True
+        check = {
+            **check,
+            "status": status,
+            "claim_ids": claim_ids,
+            "reason": str(check.get("reason") or "Required fact check normalized."),
+        }
         seen_facts.add(check["fact_id"])
         normalized_facts.append(check)
     for requirement in requirements:
