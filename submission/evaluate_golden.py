@@ -212,9 +212,10 @@ def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, A
                 partition_events,
                 _read_json(directory / "codex_evaluation.json", {}),
             )
+    run_metadata = _read_json(run_root / "run.json", {})
     state = {
         "reason": None,
-        "commit": _git("rev-parse", "HEAD"),
+        "commit": run_metadata.get("commit") or _git("rev-parse", "HEAD"),
         "baseline_commit": BASELINE_COMMIT,
         "golden_sha256": manifest["dataset_sha256"],
         "corpus_sha256": _corpus_hash(),
@@ -597,14 +598,31 @@ def _write_architecture_metrics_at(
         for name in names:
             if relevance and element == "evidence selection":
                 continue
+            if relevance and element == "DeepSeek #2 generation" and name in {
+                "Required Fact Recall", "Claim Precision", "Claim Support Rate", "Unsupported Claim Rate"
+            }:
+                continue
+            if relevance and element == "revision" and name == "Recovery Success Rate":
+                continue
             add(element, name, reason=quality_labels)
     if relevance:
         reviewed = evaluation.get("summary", {}).get("claim_support_rate", {})
         facts = evaluation.get("summary", {}).get("required_fact_recall", {})
         if isinstance(reviewed, dict):
             add("DeepSeek #2 generation", "Claim Support Rate", numerator=reviewed.get("numerator"), denominator=reviewed.get("denominator"), value=reviewed.get("value"), source="Codex independent claim review", observations=evaluation.get("case_count"))
+            add("DeepSeek #2 generation", "Claim Precision", numerator=reviewed.get("numerator"), denominator=reviewed.get("denominator"), value=reviewed.get("value"), source="Codex independent claim review", observations=evaluation.get("case_count"))
+            denominator = int(reviewed.get("denominator", 0) or 0)
+            unsupported = denominator - int(reviewed.get("numerator", 0) or 0)
+            add("DeepSeek #2 generation", "Unsupported Claim Rate", numerator=unsupported, denominator=denominator, value=unsupported / denominator if denominator else None, source="Codex independent claim review", observations=evaluation.get("case_count"))
         if isinstance(facts, dict):
             add("DeepSeek #2 generation", "Required Fact Recall", numerator=facts.get("numerator"), denominator=facts.get("denominator"), value=facts.get("value"), source="Codex independent final-answer review", observations=evaluation.get("case_count"))
+        revision_attempts = len([event for event in events if event.get("kind") == "llm" and event.get("stage") == "generation_revision"])
+        successful_revisions = len({
+            str(event.get("question_id")) for event in events
+            if event.get("kind") == "quality" and event.get("stage") == "reverification" and event.get("passed") == 1
+        })
+        if revision_attempts:
+            add("revision", "Recovery Success Rate", numerator=successful_revisions, denominator=revision_attempts, value=successful_revisions / revision_attempts, source="runtime revision and reverification events", observations=revision_attempts)
     summary = evaluation.get("summary", {})
     for source_name, metric_name in (
         ("required_fact_recall", "Required Fact Recall"),
