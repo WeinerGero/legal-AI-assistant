@@ -71,12 +71,15 @@ def load_fragments(path: Path, *, max_chars: int = 1800, overlap: int = 200) -> 
                     text = json.dumps(json.loads(text), ensure_ascii=False, indent=2)
                 except json.JSONDecodeError:
                     pass
-            for section in filter(str.strip, CLAUSE.split(text)):
+            for section, section_start in _section_spans(text):
                 title = section.splitlines()[0].strip()[:120]
                 start = 0
                 while start < len(section):
-                    part = section[start : start + max_chars].strip()
+                    window = section[start : start + max_chars]
+                    leading = len(window) - len(window.lstrip())
+                    part = window.strip()
                     if part:
+                        part_start = section_start + start + leading
                         fragments.append(
                             Fragment(
                                 source=name,
@@ -84,6 +87,8 @@ def load_fragments(path: Path, *, max_chars: int = 1800, overlap: int = 200) -> 
                                 text=part,
                                 dates=tuple(DATE.findall(part)),
                                 relations=tuple(match.group(1).lower() for match in RELATION.finditer(part)),
+                                start_char=part_start,
+                                end_char=part_start + len(part),
                                 citation_section=title,
                             )
                         )
@@ -93,6 +98,21 @@ def load_fragments(path: Path, *, max_chars: int = 1800, overlap: int = 200) -> 
     if not fragments:
         raise ValueError("knowledge-base.zip не содержит поддерживаемых текстовых документов")
     return fragments
+
+
+def _section_spans(text: str) -> list[tuple[str, int]]:
+    starts = [match.start() for match in CLAUSE.finditer(text)]
+    if not starts or starts[0] != 0:
+        starts.insert(0, 0)
+    spans: list[tuple[str, int]] = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(text)
+        raw = text[start:end]
+        leading = len(raw) - len(raw.lstrip())
+        section = raw.strip()
+        if section:
+            spans.append((section, start + leading))
+    return spans
 
 
 def _read_docx(raw: bytes) -> str:
