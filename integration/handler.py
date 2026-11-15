@@ -2,23 +2,33 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 from pathlib import Path
 from time import perf_counter
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+import httpx
+
 from backend.schemas import CoreResult, ModelQuestion
 from integration.config import IntegrationConfig
 from submission.model_client import ModelClient
 from submission.pipeline import SubmissionPipeline
-from submission.search import Fragment, HybridIndex, _read_archive_documents
+from submission.search import Fragment, HybridIndex, RequiredLocalServiceError, _read_archive_documents
 
 LOGGER = logging.getLogger("legal_rag.integration")
 
 
 class QueueFullError(RuntimeError):
     pass
+
+
+class ModelDependencyError(RuntimeError):
+    def __init__(self, service: str, reason: str) -> None:
+        super().__init__(f"{service}: {reason}")
+        self.service = service
+        self.reason = reason
 
 
 class RagHandler:
@@ -45,14 +55,15 @@ class RagHandler:
         )
         self._slots = threading.BoundedSemaphore(config.queue_capacity)
         self._model_lock = threading.BoundedSemaphore(config.max_concurrency)
-        self.ready = True
+        self.diagnostics = self._probe_dependencies()
+        self.ready = bool(self.diagnostics["ready"])
 
     def close(self) -> None:
         self.ready = False
 
     def __call__(self, payload: str) -> CoreResult:
         if not self.ready:
-            raise RuntimeError("RAG handler is not ready")
+            raise ModelDependencyError("rag", "one or more required model dependencies are unavailable")
         if not self._slots.acquire(blocking=False):
             raise QueueFullError("RAG request queue is full")
         started = perf_counter()
@@ -70,9 +81,16 @@ class RagHandler:
                 ensure_ascii=False,
             )
             messages.append({"role": "user", "content": f"Контекст: {context_note}\n\n{request.question}"})
-            with self._model_lock:
-                self.client.reset_question_trace()
-                self.pipeline.run(json.dumps({"messages": messages}, ensure_ascii=False))
+            try:
+                with self._model_lock:
+                    self.client.reset_question_trace()
+                    self.pipeline.run(json.dumps({"messages": messages}, ensure_ascii=False))
+            except RequiredLocalServiceError as exc:
+                LOGGER.exception("rag_model_failure service=local_model error_type=%s", type(exc).__name__)
+                raise ModelDependencyError("local_model", "request failed") from exc
+            except (httpx.HTTPError, httpx.TimeoutException, ValueError) as exc:
+                LOGGER.exception("rag_model_failure service=model error_type=%s", type(exc).__name__)
+                raise ModelDependencyError("model", "invalid or unavailable response") from exc
             result = self._to_core_result(request)
             LOGGER.info(
                 "rag_request_complete request_id=%s duration_ms=%.3f sources=%d trace=%s",
@@ -84,6 +102,64 @@ class RagHandler:
             return result
         finally:
             self._slots.release()
+
+    def _probe_dependencies(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "bge_m3": {"ready": False},
+            "qwen3": {"ready": False},
+            "deepseek": {"ready": False},
+            "faiss": {"ready": self.index.faiss is not None},
+        }
+        try:
+            response = httpx.post(
+                f"{self.client.embedding_base_url}/embeddings",
+                headers={"Authorization": f"Bearer {self.client.embedding_api_key}"},
+                json={"model": self.client.embedding_model, "input": ["legal readiness probe"]},
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            embedding = response.json().get("data", [{}])[0].get("embedding", [])
+            valid = len(embedding) == 1024 and all(math.isfinite(float(value)) for value in embedding)
+            result["bge_m3"] = {"ready": valid, "dimension": len(embedding)}
+        except Exception as exc:
+            LOGGER.warning("model_probe service=bge_m3 error_type=%s", type(exc).__name__)
+            result["bge_m3"] = {"ready": False, "error_type": type(exc).__name__}
+        try:
+            response = httpx.post(
+                f"{self.client.reranker_base_url}/rerank",
+                headers={"Authorization": f"Bearer {self.client.reranker_api_key}"},
+                json={
+                    "model": self.client.reranker_model,
+                    "query": "legal readiness probe",
+                    "documents": ["first legal fragment", "second legal fragment"],
+                    "top_n": 2,
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            rows = response.json().get("results", response.json().get("data", []))
+            valid = isinstance(rows, list) and bool(rows) and all(
+                isinstance(row, dict) and 0 <= int(row.get("index", row.get("document_index", -1))) < 2
+                for row in rows
+            )
+            result["qwen3"] = {"ready": valid, "results": len(rows) if isinstance(rows, list) else 0}
+        except Exception as exc:
+            LOGGER.warning("model_probe service=qwen3 error_type=%s", type(exc).__name__)
+            result["qwen3"] = {"ready": False, "error_type": type(exc).__name__}
+        try:
+            if not self.client.base_url or not self.client.api_key:
+                raise RuntimeError("DeepSeek configuration is incomplete")
+            self.client.complete_json(
+                "Return a JSON object with a single key ready and boolean value true.",
+                "{}",
+                stage="readiness",
+            )
+            result["deepseek"] = {"ready": True, "model": self.client.llm_model}
+        except Exception as exc:
+            LOGGER.warning("model_probe service=deepseek error_type=%s", type(exc).__name__)
+            result["deepseek"] = {"ready": False, "error_type": type(exc).__name__}
+        result["ready"] = all(bool(item.get("ready")) for item in result.values())
+        return result
 
     def _to_core_result(self, request: ModelQuestion) -> CoreResult:
         artifacts = self.pipeline.last_artifacts

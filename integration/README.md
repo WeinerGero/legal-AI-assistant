@@ -32,8 +32,20 @@ docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml confi
 docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml up --build
 ```
 
+To start the local model containers as well (CPU):
+
+```powershell
+docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml -f integration/docker-compose.models.yml up --build
+```
+
+For NVIDIA CUDA, append `integration/docker-compose.models.cuda.yml`. The model overlays
+use persistent volumes `bge_m3_cache` and `qwen3_cache`; first startup downloads weights.
+
 Open `http://localhost:8082`. API remains at `http://localhost:8001`; RAG readiness is
 available at `http://localhost:8001/integration/readyz` after application startup.
+Readiness includes one-time BGE-M3 (1024 dimensions), Qwen3 two-document rerank,
+DeepSeek configuration/control-call, and FAISS checks. A failed mandatory dependency is
+reported as `rag_ready=false`; requests return HTTP 503 with a technical error code.
 
 The integration limits Qwen3/model concurrency to one request and bounds the waiting
 queue. The interactive Qwen3-4B batch is bounded to 12 candidates and six returned

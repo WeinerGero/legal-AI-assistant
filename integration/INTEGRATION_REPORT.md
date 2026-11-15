@@ -89,3 +89,18 @@ reported conflicts in `.env.example`, `submission/build_submission.py`,
 `submission/solution.py`. There were no backend or frontend conflicts. The conflicts arise
 because `dev` contains an independently evolved RAG and does not yet contain the protected
 `back+front` head; they must be resolved explicitly in a later integration PR.
+
+## Model deployment overlay
+
+`docker-compose.models.yml` adds Hugging Face TEI CPU BGE-M3 and the official
+`ghcr.io/ggml-org/llama.cpp:server` Qwen3 GGUF server. The CUDA overlay swaps in GPU-capable
+images and reserves one NVIDIA device. BGE uses `/v1/embeddings`; Qwen uses llama.cpp's
+`/v1/rerank` with one parallel slot. Model caches are persistent named volumes.
+
+The overlays were validated with `docker compose config --quiet` (CPU and CUDA files) and
+the integration package passed Ruff and bytecode compilation. Model weight downloads were
+not repeated in this verification run; availability and memory usage must be measured on
+the target host during first startup.
+
+### ѕроверка model overlay
+CPU overlay собран и проверен через docker compose config. ¬ указанном репозитории tensorblock Q4_K_M отсутствует (llama.cpp сообщил доступные Q2_K и Q3_K_M), поэтому конфигураци€ использует фактически существующий Qwen3-Reranker-4B-Q3_K_M.gguf; подмена Q4 не выполн€лась. јвтозагрузка Qwen через HF в текущем контейнере остановилась на TLS-проверке Hugging Face, это оставлено как ограничение. BGE-M3 и Qwen через ранее запущенные локальные API проверены readiness-пробами: BGE 1024 измерени€, Qwen 2 результата; /integration/readyz вернул rag_ready=true. ѕри сбое модели интеграци€ отвечает HTTP 503 с техническим кодом, без insufficient_evidence.
