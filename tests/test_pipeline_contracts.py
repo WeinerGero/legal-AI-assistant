@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from submission.pipeline import (
+    _append_follow_up_question,
+    _valid_follow_up_question,
     _align_generation_citations,
     _fact_requirements,
     _normalize_verification,
@@ -14,6 +16,21 @@ from submission.pipeline import (
     _validate_public_answer,
     _validate_verification,
 )
+
+
+def test_follow_up_question_is_safe_and_single():
+    verification = {"follow_up_question": "Уточните дату вступления редакции в силу?"}
+    generation = {"claims": [{"claim_id": "C1"}]}
+    answer = _append_follow_up_question("Подтверждённая часть ответа.", verification, generation, target_language="ru", answer_state="success")
+    assert answer.endswith("Уточните дату вступления редакции в силу?")
+    assert _append_follow_up_question(answer, verification, generation, target_language="ru", answer_state="success") == answer
+
+
+def test_follow_up_question_rejects_generic_markers_and_refusal():
+    generation = {"claims": []}
+    assert not _valid_follow_up_question("Чем ещё помочь?", "ru")
+    assert not _valid_follow_up_question("Уточните [E001]?", "ru")
+    assert _append_follow_up_question("Недостаточно данных.", {"follow_up_question": "Уточните дату?"}, generation, target_language="ru", answer_state="legal_refusal") == "Недостаточно данных."
 
 
 EVIDENCE = [

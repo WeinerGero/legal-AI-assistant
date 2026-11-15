@@ -178,6 +178,12 @@ class SubmissionPipeline:
                 self._record_duration(
                     "final_rendering", render_started, partial=int(partial is not None)
                 )
+            before_follow_up = result
+            result = _append_follow_up_question(
+                result, verification, generation,
+                target_language=analysis["target_language"],
+                answer_state=answer_state,
+            )
             _validate_public_answer(result)
             total_claims = len(generation["claims"])
             self.last_outcome = {
@@ -192,6 +198,7 @@ class SubmissionPipeline:
                 answer_length=len(result), retained_claims=retained_claims,
                 retained_claims_rate=retained_claims / total_claims if total_claims else 0.0,
                 answer_state=answer_state,
+                follow_up_added=int(result != before_follow_up),
             )
             self._record_question(started, generation, verification, technical_failure=False)
             return result
@@ -276,6 +283,11 @@ class SubmissionPipeline:
                 raise ValueError("recovery answer was not verified")
             result, retained_claims = partial
             state = "success"
+        result = _append_follow_up_question(
+            result, verification, generation,
+            target_language=target_language, answer_state=state,
+        )
+        _validate_public_answer(result)
         total_claims = len(generation["claims"])
         self.last_outcome = {
             "state": state,
@@ -827,6 +839,39 @@ def _normalize_verification(
         or any(check.get("status") != "addressed" for check in normalized_facts)
     ):
         verification["verdict"] = "revision_required"
+    follow_up = verification.get("follow_up_question")
+    verification["follow_up_question"] = follow_up if isinstance(follow_up, str) and follow_up.strip() else None
+
+
+_GENERIC_FOLLOW_UPS = {"чем ещё помочь?", "что ещё уточнить?", "могу ли я помочь?", "how can i help?"}
+
+
+def _valid_follow_up_question(value: str, target_language: str) -> bool:
+    text = " ".join(value.split())
+    if not text or len(text) > 120 or "\n" in value or not text.endswith("?"):
+        return False
+    if text.casefold() in _GENERIC_FOLLOW_UPS or re.search(r"\b(?:F\d{3,}|E\d{3,})\b", text, re.I):
+        return False
+    if target_language.casefold().startswith("ru"):
+        return bool(re.search(r"[А-Яа-яЁё]", text))
+    if target_language.casefold().startswith("en"):
+        return bool(re.search(r"[A-Za-z]", text))
+    return True
+
+
+def _append_follow_up_question(
+    answer: str, verification: dict, generation: dict, *, target_language: str, answer_state: str
+) -> str:
+    if answer_state == "legal_refusal" and not generation.get("claims"):
+        return answer
+    candidate = verification.get("follow_up_question")
+    if not isinstance(candidate, str) or not _valid_follow_up_question(candidate, target_language):
+        return answer
+    question = " ".join(candidate.split())
+    if question.casefold() in answer.casefold():
+        return answer
+    suffix = f"\n\n{question}"
+    return answer + suffix if len(answer) + len(suffix) <= MAX_RENDERED_ANSWER_CHARS else answer
 
 
 def _render_verified_partial_answer(
