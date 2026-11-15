@@ -155,6 +155,11 @@ class ModelClient:
                     if self.budget is not None
                     else self.timeout
                 )
+                if (
+                    service == "reranker"
+                    and os.environ.get("RAG_RUNTIME_MODE", "").strip().upper() == "DEV_LOCAL"
+                ):
+                    timeout = max(timeout, 240.0)
                 try:
                     response = httpx.post(
                         f"{base_url}/{endpoint.lstrip('/')}",
