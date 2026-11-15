@@ -34,6 +34,10 @@ Send a message with the selected document context:
 }
 ```
 
+The context is saved per conversation. It can be omitted on later messages to
+reuse the saved document; send `"active_document": null` to clear it. Sources in
+a previous answer do not automatically become the active document.
+
 When wiring the core handler, also set `CORPUS_ID` and
 `INDEX_GENERATION_ID` in `.env`.
 

@@ -79,7 +79,7 @@ class ConversationUpdate(InputModel):
 
 class MessageInput(InputModel):
     content: str = Field(min_length=1, max_length=20_000)
-    context: QuestionContext
+    context: QuestionContext | None = None
 
     @field_validator("content")
     @classmethod
@@ -376,11 +376,14 @@ def send_message(
         .limit(6)
     ).all()
     context_data = conversation.context_json or {}
-    new_context = payload.context.model_dump(mode="json")
     previous_context = {
         "active_document": context_data.get("active_document"),
         "event_date": context_data.get("event_date"),
     }
+    new_context = previous_context.copy()
+    if payload.context is not None:
+        submitted_context = payload.context.model_dump(mode="json", exclude_unset=True)
+        new_context.update(submitted_context)
     context_revision = int(context_data.get("context_revision", 1))
     if previous_context != new_context:
         context_revision += 1
@@ -389,6 +392,7 @@ def send_message(
         **new_context,
         "context_revision": context_revision,
     }
+    model_context = QuestionContext.model_validate(new_context)
 
     user_message = Message(
         conversation_id=conversation_id,
@@ -431,7 +435,7 @@ def send_message(
         schema_version="1.0",
         request_id=f"req-{uuid4()}",
         question=payload.content,
-        context=payload.context,
+        context=model_context,
         recent_messages=[
             RecentMessage(role=item.role, content=item.content) for item in reversed(recent)
         ],

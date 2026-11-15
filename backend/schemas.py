@@ -16,8 +16,8 @@ class ActiveDocument(StrictModel):
 
 
 class QuestionContext(StrictModel):
-    active_document: ActiveDocument | None
-    event_date: date | None
+    active_document: ActiveDocument | None = None
+    event_date: date | None = None
 
 
 class RecentMessage(StrictModel):
