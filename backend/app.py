@@ -6,7 +6,7 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -92,6 +92,20 @@ class MessageInput(InputModel):
         if not value:
             raise ValueError("Message must not be blank.")
         return value
+
+
+class MessageOutput(BaseModel):
+    id: UUID
+    role: Literal["user", "assistant"]
+    content: str
+    answer: RenderedAnswerV1 | None
+    created_at: datetime
+
+
+class SendMessageOutput(BaseModel):
+    user_message: MessageOutput
+    assistant_message: MessageOutput
+    answer: RenderedAnswerV1
 
 
 def _hash_password(password: str) -> str:
@@ -327,7 +341,10 @@ def delete_conversation(
     db.commit()
 
 
-@app.get("/api/v1/conversations/{conversation_id}/messages")
+@app.get(
+    "/api/v1/conversations/{conversation_id}/messages",
+    response_model=list[MessageOutput],
+)
 def list_messages(
     conversation_id: UUID,
     limit: int = Query(default=100, ge=1, le=500),
@@ -345,7 +362,15 @@ def list_messages(
     return [_message_json(item) for item in reversed(messages)]
 
 
-@app.post("/api/v1/conversations/{conversation_id}/messages", status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/api/v1/conversations/{conversation_id}/messages",
+    status_code=status.HTTP_201_CREATED,
+    response_model=SendMessageOutput,
+    responses={
+        status.HTTP_502_BAD_GATEWAY: {"model": TechnicalFailure},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"model": TechnicalFailure},
+    },
+)
 def send_message(
     conversation_id: UUID,
     payload: MessageInput,
@@ -431,7 +456,7 @@ def send_message(
     }
 
 
-@app.get("/api/v1/answers/{answer_id}")
+@app.get("/api/v1/answers/{answer_id}", response_model=RenderedAnswerV1)
 def get_answer(
     answer_id: UUID,
     user: User = Depends(_current_user),
