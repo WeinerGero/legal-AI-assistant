@@ -29,6 +29,7 @@ PARTITIONS_PATH = ROOT / "tests" / "golden" / "golden_partitions.json"
 PARTITION_RUNS = ROOT / "artifacts" / "golden-runs"
 P03_RELEVANCE = ROOT / "tests" / "golden" / "p03_relevance_v1.json"
 INDEX_CHUNKS = ROOT / "submission" / "assets" / "bge_m3" / "chunks.json"
+HISTORY_RUNS = ROOT / "tests" / "golden" / "history_runs.json"
 BASELINE_COMMIT = "6f11e3ba3bfbc4ef6b3ab738f407b5c3aa1bbdfa"
 REQUIRED_FIELDS = (
     "id", "category", "title", "query", "expected_behavior", "gold_answer", "failure_conditions"
@@ -421,25 +422,82 @@ def _write_outputs(cases: list[dict[str, Any]], rows: list[dict[str, Any]], even
         "All unavailable quality measures are N/A, not zero.\n",
         encoding="utf-8",
     )
-    (REPORTS / "GOLDEN_FAILURE_ANALYSIS.md").write_text(
-        "# Golden failure analysis\n\n"
-        f"The partitioned real run is in progress: {completed}/65 cases executed and {evaluated}/65 evaluated by Codex. "
-        f"Current limitation: {reason}. Unfinished cases remain N/A.\n\n"
-        "Verified code regressions cover citation-marker alignment, contradictory verification pass, "
-        "bounded timeout retry, and exact fallback character ranges.\n",
-        encoding="utf-8",
-    )
-    (REPORTS / "RAG_BASELINE_VS_CURRENT.md").write_text(
-        "# Baseline versus current\n\n"
-        f"Baseline commit: `{BASELINE_COMMIT}`. Current commit: `{state['commit']}`.\n\n"
-        "| Metric | Baseline | Current | Delta |\n|---|---:|---:|---:|\n"
-        f"| Full live cases | N/A | {completed}/65 | N/A |\n"
-        f"| Codex score | N/A | {codex_score} | N/A |\n"
-        "| Required Fact Recall | N/A | See partition evaluations | N/A |\n"
-        "| Technical Refusal Rate | N/A | See partition evaluations | N/A |\n\n"
-        "Only identical case IDs may be compared; unavailable historical values remain N/A.\n",
-        encoding="utf-8",
-    )
+    _write_failure_report(cases, answers, outcomes, state, completed, evaluated)
+    _write_history_report()
+
+
+def _write_failure_report(
+    cases: list[dict[str, Any]], answers: dict[str, str], outcomes: dict[str, dict[str, Any]],
+    state: dict[str, Any], completed: int, evaluated: int,
+) -> None:
+    by_id = {str(case["id"]): case for case in cases}
+    evaluations = state.get("codex_evaluations", {}).get("cases", {})
+    relevance_payload = _read_json(P03_RELEVANCE, {})
+    evidence_ids = {
+        str(case["question_id"]): [row["chunk_id"] for row in case.get("fragments", [])]
+        for case in relevance_payload.get("cases", [])
+    }
+    lines = [
+        "# Golden failure analysis", "",
+        f"The current immutable run completed {completed}/65 cases and Codex evaluated {evaluated}/65. "
+        "Unfinished cases remain N/A.", "",
+    ]
+    for case_id, evaluation in evaluations.items():
+        case = by_id[case_id]
+        failure = evaluation.get("failure_analysis", {})
+        outcome = outcomes.get(case_id, {})
+        lines.extend([
+            f"## {case_id}", "",
+            f"1. Expected behavior: {case['expected_behavior']}",
+            f"2. Actual answer: {answers.get(case_id, 'N/A')}",
+            f"3. Missing or incorrect assertions: {evaluation.get('reason', 'N/A')}",
+            f"4. Independently available evidence: {', '.join(evidence_ids.get(case_id, [])) or 'N/A: no provision-level label required'}.",
+            f"5. First information-loss stage: {failure.get('first_loss_stage', 'N/A')}",
+            f"6. Confirmed cause or testable hypothesis: {failure.get('cause', 'N/A')}",
+            f"7. General fix: {failure.get('fix', 'N/A')}",
+            f"8. Retest result: {failure.get('retest', 'N/A')}",
+            f"9. Side effects: {failure.get('side_effects', 'N/A')}",
+            f"10. Terminal state: {outcome.get('final_state', 'N/A')}; initial error: {outcome.get('error_type') or 'none'}.",
+            "",
+        ])
+    _atomic_text(REPORTS / "GOLDEN_FAILURE_ANALYSIS.md", "\n".join(lines))
+
+
+def _write_history_report() -> None:
+    manifest = _read_json(HISTORY_RUNS, {})
+    rows = []
+    for item in manifest.get("partitions", []):
+        directory = PARTITION_RUNS / item["run_id"]
+        evaluation = _read_json(directory / "partitions" / item["partition_id"] / "codex_evaluation.json", {})
+        metadata = _read_json(directory / "run.json", {})
+        if not evaluation:
+            continue
+        summary = evaluation.get("summary", {})
+        rows.append({"partition": item["partition_id"], "run": item["run_id"], "commit": metadata.get("commit", item.get("commit")), "cases": evaluation.get("case_count", 0), "score": summary.get("mean_score"), "facts": summary.get("required_fact_recall", {}), "claims": summary.get("claim_support_rate", {}), "citations": summary.get("citation_coverage", {}), "technical": summary.get("technical_refusal_rate", {}), "false_refusal": summary.get("false_refusal_rate", {}), "calendar": summary.get("calendar_time_ms")})
+    total_cases = sum(int(row["cases"]) for row in rows)
+    score_sum = sum(float(row["score"]) * int(row["cases"]) for row in rows)
+    def combined(name: str) -> tuple[int, int, float | None]:
+        numerator = sum(int(row[name].get("numerator", 0)) for row in rows if isinstance(row[name], dict))
+        denominator = sum(int(row[name].get("denominator", 0)) for row in rows if isinstance(row[name], dict))
+        return numerator, denominator, numerator / denominator if denominator else None
+    lines = [
+        "# Baseline versus current", "",
+        "This is mixed-version historical progress, not a quality estimate for one commit. Same-version comparison on identical IDs is N/A because no matched replay exists.", "",
+        "| Partition | Run | Commit | Cases | Codex | Required facts | Claims supported | Citations | Technical refusals | Calendar s |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    def ratio(value: Any) -> str:
+        if not isinstance(value, dict):
+            return "N/A"
+        return f'{value.get("numerator")}/{value.get("denominator")} ({float(value.get("value", 0)):.1%})'
+    for row in rows:
+        lines.append(f'| {row["partition"]} | {row["run"]} | `{row["commit"]}` | {row["cases"]} | {float(row["score"]):.4f} | {ratio(row["facts"])} | {ratio(row["claims"])} | {ratio(row["citations"])} | {ratio(row["technical"])} | {float(row["calendar"] or 0) / 1000:.3f} |')
+    lines.extend(["", f"Mixed-version total: {total_cases}/65; Codex case macro: {score_sum / total_cases:.4f}." if total_cases else "Mixed-version total: 0/65."])
+    for name, title in (("facts", "Required Fact Recall"), ("claims", "Claim Support Rate"), ("citations", "Citation Coverage"), ("technical", "Technical Refusal Rate"), ("false_refusal", "False Refusal Rate")):
+        numerator, denominator, value = combined(name)
+        lines.append(f"- {title}: {numerator}/{denominator} ({value:.2%})" if value is not None else f"- {title}: N/A")
+    lines.extend(["", "External organizer checkpoint: 10.083 points in 700.8 seconds. It is not converted to the Codex scale.", f"Baseline code commit: `{BASELINE_COMMIT}`.", ""])
+    _atomic_text(REPORTS / "RAG_BASELINE_VS_CURRENT.md", "\n".join(lines))
 
 
 def _write_event_csv(name: str, events: list[dict[str, Any]], predicate) -> None:
@@ -537,7 +595,16 @@ def _write_architecture_metrics_at(
         "revision": ("Recovery Success Rate", "New Defect Rate", "Repeated Error Rate", "Completeness Delta"),
     }.items():
         for name in names:
+            if relevance and element == "evidence selection":
+                continue
             add(element, name, reason=quality_labels)
+    if relevance:
+        reviewed = evaluation.get("summary", {}).get("claim_support_rate", {})
+        facts = evaluation.get("summary", {}).get("required_fact_recall", {})
+        if isinstance(reviewed, dict):
+            add("DeepSeek #2 generation", "Claim Support Rate", numerator=reviewed.get("numerator"), denominator=reviewed.get("denominator"), value=reviewed.get("value"), source="Codex independent claim review", observations=evaluation.get("case_count"))
+        if isinstance(facts, dict):
+            add("DeepSeek #2 generation", "Required Fact Recall", numerator=facts.get("numerator"), denominator=facts.get("denominator"), value=facts.get("value"), source="Codex independent final-answer review", observations=evaluation.get("case_count"))
     summary = evaluation.get("summary", {})
     for source_name, metric_name in (
         ("required_fact_recall", "Required Fact Recall"),
@@ -566,6 +633,8 @@ def _write_architecture_metrics_at(
         for event in events if event.get("question_id") is not None
     ]
     _atomic_csv(directory / "case_metrics.csv", case_fields, case_rows)
+    if relevance:
+        _write_fact_flow_at(directory / "fact_flow.csv", events, relevance, evaluation)
 
 
 def _load_relevance_labels(question_ids: set[str]) -> dict[str, dict[str, Any]]:
@@ -609,7 +678,11 @@ def _load_relevance_labels(question_ids: set[str]) -> dict[str, dict[str, Any]]:
                 "document_id": hashlib.sha256(chunk["document"].encode("utf-8")).hexdigest()[:16],
                 "section": str(chunk.get("section") or ""),
             })
-        result[question_id] = {"fragments": fragment_rows, "trace_catalog": trace_catalog}
+        result[question_id] = {
+            "fragments": fragment_rows,
+            "trace_catalog": trace_catalog,
+            "non_retrieval_fact_ids": annotated[question_id].get("non_retrieval_fact_ids", []),
+        }
     return result
 
 
@@ -646,8 +719,16 @@ def _retrieval_metric_rows(
                 fragment_lookup = {row["trace_id"]: row for row in annotation["fragments"]}
                 trace_catalog = annotation["trace_catalog"]
                 trace_to_grade = {trace: int(row["relevance"]) for trace, row in fragment_lookup.items()}
-                document_relevance = {row["document_id"]: max(int(row["relevance"]), 1) for row in annotation["fragments"]}
-                section_relevance = {f'{row["document_id"]}#{row["section"]}': max(int(row["relevance"]), 1) for row in annotation["fragments"]}
+                document_relevance: dict[str, int] = {}
+                section_relevance: dict[str, int] = {}
+                for row in annotation["fragments"]:
+                    document_relevance[row["document_id"]] = max(
+                        document_relevance.get(row["document_id"], 0), int(row["relevance"])
+                    )
+                    section_id = f'{row["document_id"]}#{row["section"]}'
+                    section_relevance[section_id] = max(
+                        section_relevance.get(section_id, 0), int(row["relevance"])
+                    )
                 doc_ranking = list(event.get("ranked_document_ids", []))
                 section_ranking = []
                 for trace in trace_ranking:
@@ -683,34 +764,95 @@ def _retrieval_metric_rows(
                     "averaging": "micro", "source": "P03 independent provision-level relevance annotation v1",
                     "observations": len(relevance),
                 })
-    rows.extend(_selection_loss_rows(events, relevance, first_events))
+    rows.extend(_selection_loss_rows(relevance, first_events))
     return rows
 
 
 def _selection_loss_rows(
-    events: list[dict[str, Any]],
     relevance: dict[str, dict[str, Any]],
     first_events: dict[tuple[str, str], dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    selected = {
-        str(event.get("question_id")): set(event.get("fragment_ids", []))
-        for event in events
-        if event.get("kind") == "pipeline" and event.get("stage") == "evidence_selection"
-    }
-    present = lost = 0
+    present = lost = relevant_selected = relevant_total = selected_total = 0
+    required_selected = required_total = 0
     for question_id, annotation in relevance.items():
         rerank = first_events.get((question_id, "rerank"), {})
         ranked = set(rerank.get("ranked_fragment_ids", []))
         required = {row["trace_id"] for row in annotation["fragments"] if row.get("necessity") == "required"}
+        chosen = set(rerank.get("ranked_fragment_ids", []))
+        relevant = {row["trace_id"] for row in annotation["fragments"]}
         available = required & ranked
         present += len(available)
-        lost += len(available - selected.get(question_id, set()))
-    return [{
-        "element": "evidence selection", "metric": "Evidence Selection Loss",
-        "value": lost / present if present else 0.0, "numerator": lost, "denominator": present,
-        "averaging": "micro", "source": "P03 independent provision-level relevance annotation v1",
-        "observations": len(relevance),
-    }]
+        lost += len(available - chosen)
+        relevant_selected += len(relevant & chosen)
+        relevant_total += len(relevant)
+        selected_total += len(chosen)
+        required_selected += len(required & chosen)
+        required_total += len(required)
+    source = "P03 independent provision-level relevance annotation v1"
+    return [
+        {"element": "evidence selection", "metric": "Evidence Precision", "value": relevant_selected / selected_total if selected_total else None, "numerator": relevant_selected, "denominator": selected_total, "averaging": "micro", "source": source, "observations": len(relevance)},
+        {"element": "evidence selection", "metric": "Evidence Recall", "value": relevant_selected / relevant_total if relevant_total else None, "numerator": relevant_selected, "denominator": relevant_total, "averaging": "micro", "source": source, "observations": len(relevance)},
+        {"element": "evidence selection", "metric": "Required Fact Coverage", "value": required_selected / required_total if required_total else None, "numerator": required_selected, "denominator": required_total, "averaging": "micro by required evidence", "source": source, "observations": len(relevance)},
+        {"element": "evidence selection", "metric": "Evidence Selection Loss", "value": lost / present if present else 0.0, "numerator": lost, "denominator": present, "averaging": "micro", "source": source, "observations": len(relevance)},
+    ]
+
+
+def _write_fact_flow_at(
+    path: Path, events: list[dict[str, Any]], relevance: dict[str, dict[str, Any]],
+    evaluation: dict[str, Any],
+) -> None:
+    first_events: dict[tuple[str, str], dict[str, Any]] = {}
+    for event in events:
+        question_id = str(event.get("question_id"))
+        stage = str(event.get("stage"))
+        if event.get("kind") == "rag":
+            first_events.setdefault((question_id, stage), event)
+    published = {
+        str(row["case_id"]): set(row.get("published_fact_ids", []))
+        for row in evaluation.get("cases", [])
+    }
+    rows = []
+    for question_id, annotation in relevance.items():
+        fact_sources: dict[str, set[str]] = defaultdict(set)
+        for fragment in annotation["fragments"]:
+            for fact_id in fragment.get("required_fact_ids", []):
+                fact_sources[str(fact_id)].add(fragment["trace_id"])
+        all_fact_ids = set(fact_sources) | set(annotation.get("non_retrieval_fact_ids", []))
+        bm25 = set(first_events.get((question_id, "bm25"), {}).get("ranked_fragment_ids", []))
+        faiss = set(first_events.get((question_id, "faiss"), {}).get("ranked_fragment_ids", []))
+        fusion = set(first_events.get((question_id, "fusion"), {}).get("ranked_fragment_ids", []))
+        rerank = set(first_events.get((question_id, "rerank"), {}).get("ranked_fragment_ids", []))
+        chosen_evidence = rerank
+        for fact_id in sorted(all_fact_ids):
+            sources = fact_sources.get(fact_id, set())
+            retrieval_applicable = bool(sources)
+            stages: list[tuple[str, bool | None]] = [
+                ("analysis_recognized", None),
+                ("source_found_bm25_or_faiss", bool(sources & (bm25 | faiss)) if retrieval_applicable else None),
+                ("preserved_after_rrf", bool(sources & fusion) if retrieval_applicable else None),
+                ("preserved_after_qwen3", bool(sources & rerank) if retrieval_applicable else None),
+                ("selected_as_evidence", bool(sources & chosen_evidence) if retrieval_applicable else None),
+                ("used_by_generator", None),
+                ("verified", None),
+                ("preserved_after_revision", None),
+                ("published", fact_id in published.get(question_id, set())),
+            ]
+            first_loss = next((stage for stage, value in stages[1:] if value is False), "none")
+            for stage, value in stages:
+                reason = ""
+                if value is None:
+                    reason = "N/A: independent fact IDs cannot be aligned to this model-internal stage" if retrieval_applicable else "N/A: behavioral fact does not require corpus retrieval"
+                rows.append({
+                    "question_id": question_id, "fact_id": fact_id, "stage": stage,
+                    "present": "N/A" if value is None else int(value),
+                    "first_loss_stage": first_loss, "supporting_fragment_ids": sorted(sources),
+                    "reason": reason,
+                })
+    _atomic_csv(
+        path,
+        ["question_id", "fact_id", "stage", "present", "first_loss_stage", "supporting_fragment_ids", "reason"],
+        [{**row, "supporting_fragment_ids": _cell(row["supporting_fragment_ids"])} for row in rows],
+    )
 
 
 def _percentile(values: list[float], fraction: float) -> float | str:

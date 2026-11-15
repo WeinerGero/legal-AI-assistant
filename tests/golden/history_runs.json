@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "description": "Canonical immutable partition runs used for mixed-version historical progress. This is not a same-version quality estimate.",
+  "partitions": [
+    {"partition_id": "P01", "run_id": "local-8e7e0c2", "commit": "8e7e0c265d03961e2759e9dc8673c8832b5f249d"},
+    {"partition_id": "P02", "run_id": "local-ee63dc2-p02", "commit": "ee63dc2365aca526cfda4df217c70ea834ca7942"},
+    {"partition_id": "P03", "run_id": "local-e2cc3ab-p03-q4b1", "commit": "e2cc3ab85b524ec7de5e90fb95a945bbf3f3da67"}
+  ]
+}

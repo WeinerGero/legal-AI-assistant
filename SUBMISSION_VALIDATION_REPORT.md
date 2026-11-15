@@ -1,6 +1,6 @@
 # Submission validation report
 
-Latest rebuild after P02: `artifacts/PSB_submission.zip`, 4,279,985 bytes.
+Latest rebuild after P03: `artifacts/PSB_submission.zip`, 4,281,137 bytes.
 The archive contains 11 root files, compiles after extraction into an isolated
 temporary directory, and contains no Golden, judge, evaluation, backend-example,
 secret, log, or development files. The builder still emits ordinary
@@ -15,13 +15,15 @@ inside the competition archive.
 ## Archive
 
 - Path: `PSB_submission.zip`
-- Size: 4,275,956 bytes (below 128 MiB)
-- SHA-256: `C8CD493AD2871156F2740BBEC3146BBF62A3163DC592D3E2A945C93393085423`.
+- Size: 4,281,137 bytes (below 128 MiB)
+- SHA-256: `4DE3263927D58AD9B3A0E3FF85B5A832FE0A376C1D498178EDFFDAAF3FE0D3F5`.
 - Files: `solution.py`, `requirements.txt`, required flat runtime modules,
   embedded index, and embedded prompts only.
 - Golden data, tests, reports, logs, `.env`, secrets, development helpers, and
   raw corpus files are absent.
 - Golden evaluation and Codex assessment tooling are excluded by the builder allowlist; the obsolete DeepSeek Golden judge was removed from the repository.
+- All ten Python runtime files in the rebuilt archive compile from their archived bytes; the flat archive contains 11 allowed root files and no forbidden evaluation material.
+- The five real P03 outputs used the `id,answer` CSV contract and ordinary Russian text; no raw `Fxxx`, `E###`, workflow state, or serialized internal JSON was published.
 
 ## Official-material comparison
 

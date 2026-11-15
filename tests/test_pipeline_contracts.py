@@ -258,3 +258,32 @@ def test_revision_scope_revisits_dependent_claims_without_case_specific_rules() 
     assert scope["unanswered_fact_ids"] == ["F003"]
     assert "calculation" in str(scope["instruction"])
 
+
+def test_citation_alignment_normalizes_claimless_refusal() -> None:
+    generation = {
+        "answer": "Недостаточно данных [E001]",
+        "claims": [],
+        "missing_facts": ["условие"],
+    }
+    _align_generation_citations(generation)
+    assert generation["answer_type"] == "insufficient_evidence"
+    assert "E001" not in generation["answer"]
+
+
+def test_missing_verdict_is_derived_conservatively() -> None:
+    generation = {
+        "answer_type": "answer",
+        "answer": "Факт [E001]",
+        "claims": [{"claim_id": "C001", "text": "Факт", "evidence_ids": ["E001"]}],
+        "missing_facts": [],
+    }
+    verification = {
+        "claim_checks": [{"claim_id": "C001", "status": "supported", "evidence_ids": ["E001"], "reason": "подтверждено"}],
+        "fact_checks": [{"fact_id": "F001", "status": "addressed", "claim_ids": ["C001"], "reason": "проверено"}],
+        "unanswered_facts": [],
+        "issues": [],
+    }
+    requirements = [{"fact_id": "F001", "description": "факт"}]
+    _normalize_verification(verification, generation, requirements)
+    assert verification["verdict"] == "pass"
+

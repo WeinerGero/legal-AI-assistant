@@ -81,6 +81,7 @@ class SubmissionPipeline:
             evidence = [
                 {
                     "evidence_id": f"E{number:03d}",
+                    "fragment_trace_id": _fragment_trace_id(item),
                     "document": item.source,
                     "section": self.index.verified_citation_section(item),
                     "dates": item.dates,
@@ -215,6 +216,7 @@ class SubmissionPipeline:
         evidence = [
             {
                 "evidence_id": f"E{number:03d}",
+                "fragment_trace_id": _fragment_trace_id(item),
                 "document": item.source,
                 "section": self.index.verified_citation_section(item),
                 "dates": item.dates,
@@ -385,6 +387,7 @@ class SubmissionPipeline:
             *(
                 {
                     "evidence_id": "",
+                    "fragment_trace_id": _fragment_trace_id(fragment),
                     "document": fragment.source,
                     "section": self.index.verified_citation_section(fragment),
                     "dates": fragment.dates,
@@ -610,9 +613,9 @@ def _align_generation_citations(generation: dict) -> None:
     if not isinstance(claims, list):
         return
     if not claims:
-        if generation.get("answer_type") == "insufficient_evidence" and isinstance(
-            generation.get("answer"), str
-        ):
+        if generation.get("missing_facts"):
+            generation["answer_type"] = "insufficient_evidence"
+        if generation.get("answer_type") == "insufficient_evidence" and isinstance(generation.get("answer"), str):
             generation["answer"] = re.sub(
                 r"\s*\[E\d{3,}\]", "", generation["answer"]
             ).strip()
@@ -795,6 +798,16 @@ def _normalize_verification(
     verification["fact_checks"] = normalized_facts
     if set(claim_evidence) != seen:
         inconsistent = True
+    if verification.get("verdict") not in VERDICTS:
+        verification["verdict"] = (
+            "pass"
+            if not inconsistent
+            and not verification.get("unanswered_facts")
+            and not verification.get("issues")
+            and all(check.get("status") == "supported" for check in normalized)
+            and all(check.get("status") == "addressed" for check in normalized_facts)
+            else "revision_required"
+        )
     if verification.get("verdict") == "pass" and (
         inconsistent
         or verification.get("unanswered_facts")
@@ -904,8 +917,19 @@ def _fact_requirements(requested_facts: list[object]) -> list[dict[str, str]]:
 def _evidence_trace_id(item: dict) -> str:
     import hashlib
 
+    if item.get("fragment_trace_id"):
+        return str(item["fragment_trace_id"])
     payload = "\u241f".join(
         str(item.get(name) or "") for name in ("document", "section", "text")
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _fragment_trace_id(fragment: object) -> str:
+    import hashlib
+
+    payload = "\u241f".join(
+        str(getattr(fragment, name, "") or "") for name in ("source", "section", "text")
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 

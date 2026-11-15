@@ -37,4 +37,12 @@ index, and ignored run artifacts. No tracked file was deleted.
   automated-assistant instructions, and the architecture document.
 - Golden execution now persists one completed case atomically before starting
   the next case; interrupted partitions resume without overwriting completed IDs.
+- P03 provision-level relevance labels and canonical mixed-version run selection
+  are stored under `tests/golden/`; neither is imported by the runtime or packed
+  into the competition ZIP.
+- Search metrics reuse the existing evaluator instead of adding a parallel
+  scoring tool. The diagnostic 24-candidate Qwen3 order is DEV_LOCAL-only and
+  the production evidence list remains top-8.
+- No fourth LLM evaluator is present. Golden scoring is an offline Codex review;
+  DeepSeek remains limited to analysis, generation, verification, and revision.
 

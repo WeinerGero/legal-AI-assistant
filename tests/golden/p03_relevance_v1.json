@@ -14,6 +14,7 @@
     },
     {
       "question_id": "P2",
+      "non_retrieval_fact_ids": ["F001"],
       "fragments": [
         {"chunk_id": "CH000129", "revision_id": "current", "relevance": 1, "necessity": "supporting", "required_fact_ids": ["F002"]},
         {"chunk_id": "CH000153", "revision_id": "current", "relevance": 1, "necessity": "supporting", "required_fact_ids": ["F002"]},

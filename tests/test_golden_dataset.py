@@ -12,6 +12,7 @@ import submission.evaluate_golden as golden_runner
 GOLDEN = Path(__file__).parent / "golden" / "PSB_golden_dataset_v1.1_codex.json"
 PARTITIONS = Path(__file__).parent / "golden" / "golden_partitions.json"
 P03_RELEVANCE = Path(__file__).parent / "golden" / "p03_relevance_v1.json"
+HISTORY_RUNS = Path(__file__).parent / "golden" / "history_runs.json"
 EXPECTED_SHA256 = "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13"
 REQUIRED_FIELDS = {
     "id",
@@ -64,6 +65,14 @@ def test_p03_relevance_labels_resolve_to_index_and_are_evaluation_only() -> None
         for path in (Path("submission/pipeline.py"), Path("submission/search.py"), Path("submission/model_client.py"))
     )
     assert "p03_relevance_v1" not in runtime_sources
+
+
+def test_history_manifest_keeps_partitions_versioned_and_distinct() -> None:
+    payload = json.loads(HISTORY_RUNS.read_text(encoding="utf-8"))
+    rows = payload["partitions"]
+    assert [row["partition_id"] for row in rows] == ["P01", "P02", "P03"]
+    assert len({row["run_id"] for row in rows}) == len(rows)
+    assert all(len(row["commit"]) == 40 for row in rows)
 
 
 def test_partition_persists_each_case_before_a_later_interruption(
