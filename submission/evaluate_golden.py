@@ -201,7 +201,13 @@ def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, A
         rows.extend(_read_answer_rows(directory / "answers.csv").values())
         event_path = directory / "events.jsonl"
         if event_path.is_file():
-            events.extend(json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip())
+            partition_events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            events.extend(partition_events)
+            _write_architecture_metrics_at(
+                directory,
+                partition_events,
+                _read_json(directory / "codex_evaluation.json", {}),
+            )
     state = {
         "reason": None,
         "commit": _git("rev-parse", "HEAD"),
@@ -475,6 +481,85 @@ def _write_stage_metrics_at(path: Path, events: list[dict[str, Any]]) -> None:
                 "errors": sum(int(event.get("error_count", 0) or bool(event.get("error_type"))) for event in relevant),
                 "retries": sum(int(event.get("retry_count", event.get("retries", 0)) or 0) for event in relevant),
             })
+
+
+def _write_architecture_metrics_at(
+    directory: Path, events: list[dict[str, Any]], evaluation: dict[str, Any]
+) -> None:
+    fields = [
+        "level", "element", "metric", "k", "numerator", "denominator", "value",
+        "averaging", "label_source", "observations", "na_reason",
+    ]
+    rows: list[dict[str, Any]] = []
+
+    def add(element: str, metric: str, *, value: Any = "N/A", numerator: Any = "N/A",
+            denominator: Any = "N/A", k: Any = "", averaging: str = "micro",
+            source: str = "runtime events", observations: Any = "N/A", reason: str = "") -> None:
+        rows.append({
+            "level": "partition", "element": element, "metric": metric, "k": k,
+            "numerator": numerator, "denominator": denominator, "value": value,
+            "averaging": averaging, "label_source": source, "observations": observations,
+            "na_reason": reason,
+        })
+
+    quality_labels = "N/A: independent entity, intent, fact, claim-error, and relevance labels are not present for this partition"
+    for metric in ("Intent Accuracy", "Entity Precision", "Entity Recall", "Entity F1", "Date Accuracy", "Version Accuracy", "Required Facts Extraction Precision", "Required Facts Extraction Recall", "Required Facts Extraction F1"):
+        add("DeepSeek #1 analysis", metric, reason=quality_labels)
+    analysis_events = [e for e in events if e.get("kind") == "quality" and e.get("stage") == "analysis"]
+    add("query preparation", "query count", value=sum(int(e.get("lexical_queries_count", 0)) + int(e.get("semantic_queries_count", 0)) for e in analysis_events), observations=len(analysis_events))
+    add("query preparation", "Query Coverage", reason="N/A: no independent fact-to-query mapping")
+    for element in ("BM25", "FAISS", "RRF", "Qwen3 reranker"):
+        for k in (5, 8, 10, 24):
+            for metric in ("Document Recall", "Section Recall", "Precision", "MRR", "nDCG", "Hit Rate"):
+                if element == "Qwen3 reranker" and k > 8:
+                    reason = "N/A: reranker returns only 8 fragments"
+                else:
+                    reason = "N/A: no independently annotated relevant document/section set"
+                add(element, metric, k=k, averaging="macro over annotated queries", reason=reason)
+    embedding_events = [e for e in events if e.get("kind") == "rag" and e.get("stage") == "embeddings"]
+    if embedding_events:
+        add("BGE-M3", "embedding dimension", value=embedding_events[0].get("embedding_dimension"), observations=len(embedding_events))
+        add("BGE-M3", "mean vector norm", value=mean(float(e["vector_norm"]) for e in embedding_events), observations=len(embedding_events))
+    rerank_events = [e for e in events if e.get("kind") == "rag" and e.get("stage") == "rerank"]
+    if rerank_events:
+        add("Qwen3 reranker", "mean candidates", value=mean(float(e.get("candidates_count", 0)) for e in rerank_events), observations=len(rerank_events))
+        add("Qwen3 reranker", "fallback rate", numerator=sum(bool(e.get("fallback_used")) for e in rerank_events), denominator=len(rerank_events), value=sum(bool(e.get("fallback_used")) for e in rerank_events) / len(rerank_events), observations=len(rerank_events))
+    for element, names in {
+        "evidence selection": ("Evidence Precision", "Evidence Recall", "Required Fact Coverage", "Evidence Selection Loss"),
+        "DeepSeek #2 generation": ("Required Fact Recall", "Claim Precision", "Claim Support Rate", "Unsupported Claim Rate", "Hallucination Rate"),
+        "DeepSeek #3 verification": ("Error Precision", "Error Recall", "Error F1", "False Acceptance", "False Rejection", "False Pass", "Coverage"),
+        "revision": ("Recovery Success Rate", "New Defect Rate", "Repeated Error Rate", "Completeness Delta"),
+    }.items():
+        for name in names:
+            add(element, name, reason=quality_labels)
+    summary = evaluation.get("summary", {})
+    for source_name, metric_name in (
+        ("required_fact_recall", "Required Fact Recall"),
+        ("claim_support_rate", "Claim Support Rate"),
+        ("citation_coverage", "Citation Coverage"),
+        ("technical_refusal_rate", "Technical Refusal Rate"),
+        ("false_refusal_rate", "False Refusal Rate"),
+        ("full_pass_rate", "Full Pass Rate"),
+    ):
+        value = summary.get(source_name)
+        if isinstance(value, dict):
+            add("final answer", metric_name, numerator=value.get("numerator"), denominator=value.get("denominator"), value=value.get("value"), source="Codex manual review", observations=evaluation.get("case_count"))
+        else:
+            add("final answer", metric_name, reason="N/A: Codex evaluation not completed")
+    add("final answer", "Codex score", value=summary.get("mean_score", "N/A"), averaging="case macro", source="Codex six-criterion review", observations=evaluation.get("case_count", "N/A"), reason="" if summary.get("mean_score") is not None else "N/A: Codex evaluation not completed")
+    _atomic_csv(directory / "architecture_metrics.csv", fields, rows)
+
+    case_fields = ["question_id", "stage", "kind", "metrics_json", "codex_score"]
+    scores = {str(row["case_id"]): row.get("overall_score") for row in evaluation.get("cases", [])}
+    case_rows = [
+        {
+            "question_id": event.get("question_id"), "stage": event.get("stage"),
+            "kind": event.get("kind"), "metrics_json": _cell(event),
+            "codex_score": scores.get(str(event.get("question_id")), "N/A"),
+        }
+        for event in events if event.get("question_id") is not None
+    ]
+    _atomic_csv(directory / "case_metrics.csv", case_fields, case_rows)
 
 
 def _percentile(values: list[float], fraction: float) -> float | str:

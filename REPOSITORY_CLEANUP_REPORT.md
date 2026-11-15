@@ -29,4 +29,12 @@ index, and ignored run artifacts. No tracked file was deleted.
   1 and participant 3 work while preserving participant 2 ownership.
 - Fallback document splitting now records exact source character ranges.
 - Golden evaluation is centralized in `submission/evaluate_golden.py`.
+- The obsolete DeepSeek Golden judge and its dedicated schema test were removed.
+  It was referenced only by that test, was excluded from the contest builder,
+  and conflicts with the current independent Codex review policy. Historical
+  judge outputs in ignored experiment artifacts were preserved.
+- The universal RAG policy is now consistent across `.agents`, `AGENTS.md`,
+  automated-assistant instructions, and the architecture document.
+- Golden execution now persists one completed case atomically before starting
+  the next case; interrupted partitions resume without overwriting completed IDs.
 

@@ -116,7 +116,7 @@ class SubmissionPipeline:
             if revision_allowed:
                 if verification.get("unanswered_facts") or generation.get("answer_type") == "insufficient_evidence":
                     evidence = self._expanded_evidence_search(
-                        standalone, verification, evidence
+                        standalone, verification, evidence, fact_requirements
                     )
                     generation_request["evidence"] = evidence
                 generation = self._generate(
@@ -352,9 +352,16 @@ class SubmissionPipeline:
         standalone: str,
         verification: dict,
         evidence: list[dict],
+        fact_requirements: list[dict],
     ) -> list[dict]:
         started = perf_counter()
         missing = [str(item).strip() for item in verification.get("unanswered_facts", []) if str(item).strip()]
+        requirement_by_id = {item["fact_id"]: item["description"] for item in fact_requirements}
+        for check in verification.get("fact_checks", []):
+            if check.get("status") != "addressed":
+                description = requirement_by_id.get(str(check.get("fact_id")))
+                if description and description not in missing:
+                    missing.append(description)
         if not missing:
             return evidence
         fragments = self.index.search_queries(
@@ -853,15 +860,22 @@ def _render_verified_partial_answer(
             evidence,
             target_language=target_language,
         )
-    limitations = [str(item).strip() for item in verification.get("unanswered_facts", []) if str(item).strip()]
+    limitations = [_clean_limitation(item) for item in verification.get("unanswered_facts", [])]
+    limitations = [item for item in limitations if item]
     limitations.extend(
-        str(item).strip() for item in generation.get("missing_facts", [])
-        if str(item).strip() and str(item).strip() not in limitations
+        cleaned for item in generation.get("missing_facts", [])
+        if (cleaned := _clean_limitation(item)) and cleaned not in limitations
     )
     if limitations:
         label = "Не подтверждено документами" if target_language.lower().startswith("ru") else "Not established by the supplied documents"
         rendered += "\n\n" + label + ": " + "; ".join(limitations) + "."
     return rendered, len(retained)
+
+
+def _clean_limitation(value: object) -> str:
+    text = str(value).strip()
+    text = re.sub(r"^F\d{3,}\s*[:\-]?\s*", "", text, flags=re.IGNORECASE)
+    return text.strip(" .;:")
 
 
 def _fact_requirements(requested_facts: list[object]) -> list[dict[str, str]]:

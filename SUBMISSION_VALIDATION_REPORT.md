@@ -1,5 +1,17 @@
 # Submission validation report
 
+Latest rebuild after P02: `artifacts/PSB_submission.zip`, 4,279,985 bytes.
+The archive contains 11 root files, compiles after extraction into an isolated
+temporary directory, and contains no Golden, judge, evaluation, backend-example,
+secret, log, or development files. The builder still emits ordinary
+`submission.csv` text through the `id,answer` contract; P02 produced five
+nonempty Russian text answers rather than internal JSON.
+
+The independent backend contract archive is
+`artifacts/PSB_BACKEND_JSON_EXAMPLES.zip` (3,541 bytes). Its schema and eight
+examples validate against `core.contracts.RenderedAnswerV1` and it is not nested
+inside the competition archive.
+
 ## Archive
 
 - Path: `PSB_submission.zip`
@@ -9,7 +21,7 @@
   embedded index, and embedded prompts only.
 - Golden data, tests, reports, logs, `.env`, secrets, development helpers, and
   raw corpus files are absent.
-- Independent `golden_judge.py` is excluded by the builder allowlist.
+- Golden evaluation and Codex assessment tooling are excluded by the builder allowlist; the obsolete DeepSeek Golden judge was removed from the repository.
 
 ## Official-material comparison
 

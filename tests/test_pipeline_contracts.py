@@ -181,7 +181,7 @@ def test_supported_independent_claim_survives_a_contradicted_claim() -> None:
             {"claim_id": "C001", "status": "supported", "evidence_ids": ["E001"], "reason": "подтверждено"},
             {"claim_id": "C002", "status": "contradicted", "evidence_ids": ["E002"], "reason": "противоречит"},
         ],
-        "unanswered_facts": ["второй факт"],
+        "unanswered_facts": ["F002: второй факт"],
         "issues": [],
     }
     rendered = _render_verified_partial_answer(generation, verification, EVIDENCE, target_language="ru")
@@ -191,6 +191,7 @@ def test_supported_independent_claim_survives_a_contradicted_claim() -> None:
     assert "Подтверждённый факт" in answer
     assert "Ошибочный факт" not in answer
     assert "Не подтверждено документами" in answer
+    assert "F002" not in answer
 
 
 @pytest.mark.parametrize(
