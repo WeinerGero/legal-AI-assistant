@@ -630,7 +630,9 @@ def _write_architecture_metrics_at(
     followups = [e for e in question_events if e.get("follow_up_added") is not None]
     add("follow-up question", "Trigger rate", numerator=sum(int(e.get("follow_up_added", 0)) for e in followups), denominator=len(followups), value=(sum(int(e.get("follow_up_added", 0)) for e in followups) / len(followups)) if followups else "N/A", source="deterministic runtime structure", observations=len(followups), reason="N/A: no question-stage trace" if not followups else "")
     add("follow-up question", "Length <= 120", value="N/A", source="deterministic runtime structure", observations=len(followups), reason="N/A: answer text is not retained in the event stream")
-    add("final answer", "Technical Refusal Rate", numerator=sum(1 for e in events if e.get("kind") == "outcome" and e.get("final_state") == "technical_refusal"), denominator=len({str(e.get("question_id")) for e in events if e.get("kind") == "outcome" and e.get("stage") == "question"}), value="N/A", source="runtime outcomes", observations=len(question_events), reason="N/A: outcome denominator is not complete in partition replay")
+    outcome_questions = {str(e.get("question_id")) for e in events if e.get("kind") == "outcome" and e.get("stage") == "question"}
+    technical_refusals = sum(1 for e in events if e.get("kind") == "outcome" and e.get("final_state") == "technical_refusal")
+    add("final answer", "Technical Refusal Rate", numerator=technical_refusals, denominator=len(outcome_questions), value=(technical_refusals / len(outcome_questions)) if outcome_questions else "N/A", source="runtime outcomes", observations=len(outcome_questions), reason="N/A: no completed outcome events" if not outcome_questions else "")
     _atomic_csv(directory / "architecture_metrics.csv", fields, rows)
 
     case_fields = ["question_id", "stage", "kind", "metrics_json", "codex_score"]
