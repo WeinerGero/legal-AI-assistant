@@ -11,14 +11,15 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse
 
-from backend.core_gateway import CoreUnavailable, answer_question
+from backend.core_gateway import CoreUnavailable, InvalidCoreOutput, answer_question
 from backend.database import (
     Answer,
+    AnswerSourceContent,
     Base,
     Conversation,
     LoginSession,
@@ -28,7 +29,13 @@ from backend.database import (
     engine,
     get_db,
 )
-from backend.schemas import AnswerResponse, ModelQuestion, QuestionContext, RecentMessage
+from backend.schemas import (
+    AnswerResponse,
+    ModelQuestion,
+    QuestionContext,
+    RecentMessage,
+    SourceSnippet,
+)
 from core.contracts import TechnicalFailure
 
 SESSION_TTL = timedelta(hours=12)
@@ -324,8 +331,9 @@ def delete_conversation(
     db: Session = Depends(get_db),
 ) -> None:
     conversation = _owned_conversation(db, user.id, conversation_id)
-    message_ids = select(Message.id).where(Message.conversation_id == conversation.id)
-    db.execute(delete(Answer).where(Answer.message_id.in_(message_ids)))
+    answer_ids = select(Answer.id).where(Answer.conversation_id == conversation.id)
+    db.execute(delete(AnswerSourceContent).where(AnswerSourceContent.answer_id.in_(answer_ids)))
+    db.execute(delete(Answer).where(Answer.id.in_(answer_ids)))
     db.execute(delete(Message).where(Message.conversation_id == conversation.id))
     db.delete(conversation)
     db.commit()
@@ -446,7 +454,7 @@ def send_message(
     )
 
     try:
-        answer = answer_question(model_request, core_handler)
+        core_result = answer_question(model_request, core_handler)
     except CoreUnavailable as exc:
         failure = TechnicalFailure(
             error_code="model_unavailable", message=str(exc), request_id=str(uuid4())
@@ -455,10 +463,10 @@ def send_message(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content=failure.model_dump(mode="json"),
         )
-    except ValidationError:
+    except InvalidCoreOutput:
         failure = TechnicalFailure(
             error_code="invalid_model_output",
-            message="Core returned an invalid answer.",
+            message="Core returned an invalid answer or source mapping.",
             request_id=str(uuid4()),
         )
         return JSONResponse(
@@ -466,6 +474,7 @@ def send_message(
             content=failure.model_dump(mode="json"),
         )
 
+    answer = core_result.answer
     answer_json = answer.model_dump(mode="json")
     assistant_message = Message(
         conversation_id=conversation_id,
@@ -475,15 +484,28 @@ def send_message(
     )
     db.add(assistant_message)
     db.flush()
-    db.add(
-        Answer(
-            id=uuid4(),
-            user_id=user.id,
-            conversation_id=conversation_id,
-            message_id=assistant_message.id,
-            answer_json=answer_json,
-        )
+    answer_record = Answer(
+        id=uuid4(),
+        user_id=user.id,
+        conversation_id=conversation_id,
+        message_id=assistant_message.id,
+        answer_json=answer_json,
     )
+    db.add(answer_record)
+    db.flush()
+    for location in core_result.source_locations:
+        db.add(
+            AnswerSourceContent(
+                answer_id=answer_record.id,
+                answer_source_id=location.answer_source_id,
+                document_id=location.document_id,
+                document_version_id=location.document_version_id,
+                clause_id=location.clause_id,
+                canonical_text=location.canonical_text,
+                start_char=location.start_char,
+                end_char=location.end_char,
+            )
+        )
     db.commit()
     db.refresh(assistant_message)
     return answer_json
@@ -504,3 +526,56 @@ def get_answer(
     if answer is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Answer not found.")
     return answer.answer_json
+
+
+@app.get(
+    "/api/v1/answers/{answer_id}/sources/{answer_source_id}",
+    response_model=SourceSnippet,
+)
+def get_answer_source(
+    answer_id: str,
+    answer_source_id: str,
+    user: User = Depends(_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    answer = db.scalar(
+        select(Answer).where(
+            Answer.user_id == user.id,
+            Answer.answer_json["answer_id"].as_string() == answer_id,
+        )
+    )
+    if answer is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Answer not found.")
+
+    source_info = next(
+        (
+            source
+            for source in answer.answer_json["sources"]
+            if source["answer_source_id"] == answer_source_id
+        ),
+        None,
+    )
+    source_content = db.scalar(
+        select(AnswerSourceContent).where(
+            AnswerSourceContent.answer_id == answer.id,
+            AnswerSourceContent.answer_source_id == answer_source_id,
+        )
+    )
+    if source_info is None or source_content is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found.")
+
+    text_value = source_content.canonical_text
+    start = source_content.start_char
+    end = source_content.end_char
+    if not 0 <= start < end <= len(text_value):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Stored source location is invalid.",
+        )
+
+    return {
+        **source_info,
+        "before": text_value[:start],
+        "highlight": text_value[start:end],
+        "after": text_value[end:],
+    }

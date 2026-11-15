@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
@@ -38,7 +39,7 @@ class ModelQuestion(StrictModel):
 
 
 class Citation(StrictModel):
-    answer_source_id: str
+    answer_source_id: str = Field(min_length=1, max_length=128)
     number: int = Field(ge=1)
 
 
@@ -56,7 +57,7 @@ class AnswerBlock(StrictModel):
 
 
 class AnswerSource(StrictModel):
-    answer_source_id: str
+    answer_source_id: str = Field(min_length=1, max_length=128)
     number: int = Field(ge=1)
     document_title: str
     version_label: str
@@ -85,3 +86,51 @@ class AnswerResponse(StrictModel):
     blocks: list[AnswerBlock]
     sources: list[AnswerSource]
     retrieval_audit: RetrievalAudit
+
+
+class SourceLocation(StrictModel):
+    answer_source_id: str = Field(min_length=1, max_length=128)
+    document_id: UUID
+    document_version_id: UUID
+    clause_id: UUID
+    canonical_text: str
+    start_char: int = Field(ge=0)
+    end_char: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_span(self) -> SourceLocation:
+        if self.end_char <= self.start_char or self.end_char > len(self.canonical_text):
+            raise ValueError("Source span must select text inside the canonical document.")
+        return self
+
+
+class CoreResult(StrictModel):
+    answer: AnswerResponse
+    source_locations: list[SourceLocation] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_sources(self) -> CoreResult:
+        source_ids = [source.answer_source_id for source in self.answer.sources]
+        location_ids = [location.answer_source_id for location in self.source_locations]
+        citation_ids = {
+            citation.answer_source_id
+            for block in self.answer.blocks
+            for segment in block.segments
+            for citation in segment.citations
+        }
+        if len(location_ids) != len(set(location_ids)) or set(source_ids) != set(location_ids):
+            raise ValueError("Each answer source must have exactly one source location.")
+        if not citation_ids.issubset(source_ids):
+            raise ValueError("Every citation must reference a source in the answer.")
+        return self
+
+
+class SourceSnippet(StrictModel):
+    answer_source_id: str = Field(min_length=1, max_length=128)
+    number: int
+    document_title: str
+    version_label: str
+    section_number: str | None
+    before: str
+    highlight: str
+    after: str
