@@ -18,7 +18,7 @@ import faiss
 import numpy as np
 
 from submission.evaluate_quality import evaluate, render_markdown
-from submission.model_client import ModelClient, _load_local_settings
+from submission.model_client import ModelClient
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "submission" / "assets" / "bge_m3"
@@ -40,9 +40,8 @@ def main(argv: list[str] | None = None) -> int:
 def run_preflight() -> dict[str, Any]:
     _require_local_environment()
     client = ModelClient(timeout=60.0, max_tokens=256, temperature=0.0)
-    local = _load_local_settings()
-    if not local.get("LLM_DEV") or client.api_key != local["LLM_DEV"]:
-        raise RuntimeError("DEV_LOCAL DeepSeek must use LLM_DEV from the local settings loader")
+    if not os.environ.get("LLM_DEV") or client.api_key != os.environ["LLM_DEV"]:
+        raise RuntimeError("DEV_LOCAL DeepSeek must use exported LLM_DEV")
 
     started = perf_counter()
     deepseek_raw = client.complete_json(

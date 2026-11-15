@@ -244,6 +244,7 @@ class SubmissionPipeline:
                 stage=stage,
             )
         )
+        _align_generation_citations(generation)
         _validate_generation(generation, evidence)
         claims = generation["claims"]
         references = [item for claim in claims for item in claim["evidence_ids"]]
@@ -481,6 +482,24 @@ def _validate_generation(generation: dict, evidence: list[dict]) -> None:
     raw_ids = set(re.findall(r"\bE\d{3,}\b", generation["answer"]))
     if raw_ids != answer_ids:
         raise ValueError("answer содержит E### вне формата [E###]")
+
+
+def _align_generation_citations(generation: dict) -> None:
+    """Render the user answer from atomic claims and their structured evidence IDs."""
+    claims = generation.get("claims")
+    if not isinstance(claims, list) or not claims:
+        return
+    rendered: list[str] = []
+    for claim in claims:
+        if not isinstance(claim, dict):
+            return
+        text = claim.get("text")
+        evidence_ids = claim.get("evidence_ids")
+        if not isinstance(text, str) or not text.strip() or not isinstance(evidence_ids, list):
+            return
+        markers = " ".join(f"[{item}]" for item in evidence_ids if isinstance(item, str))
+        rendered.append(f"{text.strip()} {markers}".rstrip())
+    generation["answer"] = "\n".join(rendered)
 
 
 def _validate_verification(verification: dict, generation: dict, evidence: list[dict]) -> None:

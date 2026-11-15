@@ -5,9 +5,9 @@ This directory is only for local validation and is not included by
 
 The PowerShell entry point configures all local endpoints in its child process.
 It does not persist environment variables in the parent console and never reads
-or prints `.env`. `ModelClient` obtains `LLM_DEV` through its existing local
-settings loader. The competition runtime continues to use organizer-provided
-environment variables and does not require `.env`.
+or prints `.env`. Export `LLM_DEV` in the parent process before launching the
+script. The competition runtime continues to use organizer-provided environment
+variables and does not require `.env`.
 
 ## Commands
 

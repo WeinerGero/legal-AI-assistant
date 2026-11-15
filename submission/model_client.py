@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Sequence
-from pathlib import Path
 from time import perf_counter, sleep
 from typing import Any
 
@@ -21,37 +20,6 @@ except ImportError:  # плоский корень submission.zip
     from recording import APIRecordingStore
 
 
-def _load_local_settings() -> dict[str, str]:
-    """Читает только нужные имена из локального .env, не выводя значения."""
-    allowed = {
-        "LLM_DEV",
-        "BASE_URL",
-        "LLM_BASE_URL",
-        "EMBEDDER_BASE_URL",
-        "RERANKER_BASE_URL",
-        "LLM_API_KEY",
-        "EMBEDDER_API_KEY",
-        "RERANKER_API_KEY",
-        "LLM_MODEL",
-        "EMB_MODEL",
-        "RERANKER_MODEL",
-    }
-    result: dict[str, str] = {}
-    try:
-        lines = Path(".env").read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return result
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        name, value = stripped.split("=", 1)
-        name = name.strip()
-        if name in allowed:
-            result[name] = value.strip().strip("'\"")
-    return result
-
-
 class ModelClient:
     def __init__(
         self,
@@ -64,16 +32,14 @@ class ModelClient:
         recording: APIRecordingStore | None = None,
         budget: RuntimeBudget | None = None,
     ) -> None:
-        local = _load_local_settings()
         def get(name: str, default: str = "") -> str:
-            value = (os.getenv(name) or local.get(name, "")).strip()
+            value = (os.getenv(name) or "").strip()
             return default if not value or value == name else value
 
-        local_key = (os.getenv("LLM_DEV") or local.get("LLM_DEV", "")).strip()
+        local_key = (os.getenv("LLM_DEV") or "").strip()
         process_api_key = (
             os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
         ).strip()
-        local_generic_key = local.get("LLM_API_KEY", "").strip()
         common_base_url = get("BASE_URL")
         self.base_url = (
             get("LLM_BASE_URL")
@@ -88,7 +54,7 @@ class ModelClient:
         self.api_key = (
             local_key
             if local_dev_mode and local_key
-            else process_api_key or local_key or local_generic_key
+            else process_api_key or local_key
         )
         self.embedding_base_url = (
             get("EMBEDDER_BASE_URL") or self.base_url
@@ -162,21 +128,26 @@ class ModelClient:
                     if self.budget is not None
                     else self.timeout
                 )
-                response = httpx.post(
-                    f"{base_url}/{endpoint.lstrip('/')}",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json=payload,
-                    timeout=timeout,
-                )
                 try:
+                    response = httpx.post(
+                        f"{base_url}/{endpoint.lstrip('/')}",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        json=payload,
+                        timeout=timeout,
+                    )
                     response.raise_for_status()
                     break
-                except httpx.HTTPStatusError as exc:
-                    status = exc.response.status_code
-                    if attempt >= 2 or status not in {429, 500, 502, 503, 504}:
+                except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                    retryable = isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)) or status in {
+                        429, 500, 502, 503, 504
+                    }
+                    if attempt >= 2 or not retryable:
                         raise
                     retries += 1
-                    retry_after = exc.response.headers.get("Retry-After", "")
+                    retry_after = getattr(getattr(exc, "response", None), "headers", {}).get(
+                        "Retry-After", ""
+                    )
                     try:
                         delay = max(0.0, min(2.0, float(retry_after)))
                     except ValueError:
