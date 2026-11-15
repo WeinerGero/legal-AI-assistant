@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import submission.evaluate_golden as golden_runner
+from submission.evaluate_quality import labeled_ranking_metrics
 
 
 GOLDEN = Path(__file__).parent / "golden" / "PSB_golden_dataset_v1.1_codex.json"
@@ -127,4 +128,20 @@ def test_partition_persists_each_case_before_a_later_interruption(
     saved = golden_runner._read_answer_rows(tmp_path / "partitions" / "P01" / "answers.csv")
     assert set(saved) == set(case_ids)
     assert attempts.count("T1") == 1
+
+
+@pytest.mark.parametrize(
+    ("ranking", "expected_recall"),
+    [(["a", "b", "c"], 1.0), (["x", "y"], 0.0)],
+)
+def test_metric_calculator_handles_ideal_and_empty_rankings(ranking: list[str], expected_recall: float) -> None:
+    result = labeled_ranking_metrics(ranking, {"a": 1, "b": 1}, 3)
+    assert result["recall"] == expected_recall
+    assert 0.0 <= result["precision"] <= 1.0
+
+
+def test_metric_calculator_is_deterministic_with_duplicate_results() -> None:
+    first = labeled_ranking_metrics(["a", "a", "b"], {"a": 1, "b": 1}, 3)
+    second = labeled_ranking_metrics(["a", "a", "b"], {"a": 1, "b": 1}, 3)
+    assert first == second
 

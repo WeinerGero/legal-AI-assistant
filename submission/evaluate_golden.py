@@ -210,7 +210,7 @@ def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, A
             _write_architecture_metrics_at(
                 directory,
                 partition_events,
-                _read_json(directory / "codex_evaluation.json", {}),
+                {},
             )
     run_metadata = _read_json(run_root / "run.json", {})
     state = {
@@ -222,7 +222,7 @@ def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, A
         "case_count": 65,
         "run_dir": str(run_root),
     }
-    state["codex_evaluations"] = _read_codex_evaluations(manifest, run_root)
+    state["codex_evaluations"] = {"cases": {}, "partitions": []}
     _write_outputs(cases, rows, events, state)
 
 
@@ -605,24 +605,13 @@ def _write_architecture_metrics_at(
             if relevance and element == "revision" and name == "Recovery Success Rate":
                 continue
             add(element, name, reason=quality_labels)
-    if relevance:
-        reviewed = evaluation.get("summary", {}).get("claim_support_rate", {})
-        facts = evaluation.get("summary", {}).get("required_fact_recall", {})
-        if isinstance(reviewed, dict):
-            add("DeepSeek #2 generation", "Claim Support Rate", numerator=reviewed.get("numerator"), denominator=reviewed.get("denominator"), value=reviewed.get("value"), source="Codex independent claim review", observations=evaluation.get("case_count"))
-            add("DeepSeek #2 generation", "Claim Precision", numerator=reviewed.get("numerator"), denominator=reviewed.get("denominator"), value=reviewed.get("value"), source="Codex independent claim review", observations=evaluation.get("case_count"))
-            denominator = int(reviewed.get("denominator", 0) or 0)
-            unsupported = denominator - int(reviewed.get("numerator", 0) or 0)
-            add("DeepSeek #2 generation", "Unsupported Claim Rate", numerator=unsupported, denominator=denominator, value=unsupported / denominator if denominator else None, source="Codex independent claim review", observations=evaluation.get("case_count"))
-        if isinstance(facts, dict):
-            add("DeepSeek #2 generation", "Required Fact Recall", numerator=facts.get("numerator"), denominator=facts.get("denominator"), value=facts.get("value"), source="Codex independent final-answer review", observations=evaluation.get("case_count"))
-        revision_attempts = len([event for event in events if event.get("kind") == "llm" and event.get("stage") == "generation_revision"])
-        successful_revisions = len({
-            str(event.get("question_id")) for event in events
-            if event.get("kind") == "quality" and event.get("stage") == "reverification" and event.get("passed") == 1
-        })
-        if revision_attempts:
-            add("revision", "Recovery Success Rate", numerator=successful_revisions, denominator=revision_attempts, value=successful_revisions / revision_attempts, source="runtime revision and reverification events", observations=revision_attempts)
+    revision_attempts = len([event for event in events if event.get("kind") == "llm" and event.get("stage") == "generation_revision"])
+    successful_revisions = len({
+        str(event.get("question_id")) for event in events
+        if event.get("kind") == "quality" and event.get("stage") == "reverification" and event.get("passed") == 1
+    })
+    if revision_attempts:
+        add("revision", "Recovery Success Rate", numerator=successful_revisions, denominator=revision_attempts, value=successful_revisions / revision_attempts, source="runtime revision and reverification events", observations=revision_attempts)
     summary = evaluation.get("summary", {})
     for source_name, metric_name in (
         ("required_fact_recall", "Required Fact Recall"),
@@ -637,7 +626,11 @@ def _write_architecture_metrics_at(
             add("final answer", metric_name, numerator=value.get("numerator"), denominator=value.get("denominator"), value=value.get("value"), source="Codex manual review", observations=evaluation.get("case_count"))
         else:
             add("final answer", metric_name, reason="N/A: Codex evaluation not completed")
-    add("final answer", "Codex score", value=summary.get("mean_score", "N/A"), averaging="case macro", source="Codex six-criterion review", observations=evaluation.get("case_count", "N/A"), reason="" if summary.get("mean_score") is not None else "N/A: Codex evaluation not completed")
+    question_events = [e for e in events if e.get("kind") == "quality" and e.get("stage") == "question"]
+    followups = [e for e in question_events if e.get("follow_up_added") is not None]
+    add("follow-up question", "Trigger rate", numerator=sum(int(e.get("follow_up_added", 0)) for e in followups), denominator=len(followups), value=(sum(int(e.get("follow_up_added", 0)) for e in followups) / len(followups)) if followups else "N/A", source="deterministic runtime structure", observations=len(followups), reason="N/A: no question-stage trace" if not followups else "")
+    add("follow-up question", "Length <= 120", value="N/A", source="deterministic runtime structure", observations=len(followups), reason="N/A: answer text is not retained in the event stream")
+    add("final answer", "Technical Refusal Rate", numerator=sum(1 for e in events if e.get("kind") == "outcome" and e.get("final_state") == "technical_refusal"), denominator=len({str(e.get("question_id")) for e in events if e.get("kind") == "outcome" and e.get("stage") == "question"}), value="N/A", source="runtime outcomes", observations=len(question_events), reason="N/A: outcome denominator is not complete in partition replay")
     _atomic_csv(directory / "architecture_metrics.csv", fields, rows)
 
     case_fields = ["question_id", "stage", "kind", "metrics_json", "codex_score"]
@@ -794,9 +787,10 @@ def _selection_loss_rows(
     required_selected = required_total = 0
     for question_id, annotation in relevance.items():
         rerank = first_events.get((question_id, "rerank"), {})
+        selection = first_events.get((question_id, "evidence_selection"), rerank)
         ranked = set(rerank.get("ranked_fragment_ids", []))
         required = {row["trace_id"] for row in annotation["fragments"] if row.get("necessity") == "required"}
-        chosen = set(rerank.get("ranked_fragment_ids", []))
+        chosen = set(selection.get("fragment_ids", selection.get("ranked_fragment_ids", [])))
         relevant = {row["trace_id"] for row in annotation["fragments"]}
         available = required & ranked
         present += len(available)
