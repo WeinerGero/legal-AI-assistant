@@ -283,6 +283,7 @@ class SubmissionPipeline:
                 stage="verification",
             )
         )
+        _normalize_verification(verification, generation)
         _validate_verification(verification, generation, evidence)
         checks = verification["claim_checks"]
         self._record_quality(
@@ -546,6 +547,51 @@ def _validate_verification(verification: dict, generation: dict, evidence: list[
             raise ValueError("verification pass содержит unanswered_facts")
         if issues:
             raise ValueError("verification pass содержит issues")
+
+
+def _normalize_verification(verification: dict, generation: dict) -> None:
+    """Downgrade inconsistent verifier output without accepting unsupported claims."""
+    checks = verification.get("claim_checks")
+    claims = generation.get("claims")
+    if not isinstance(checks, list) or not isinstance(claims, list):
+        return
+    claim_evidence = {
+        claim.get("claim_id"): list(claim.get("evidence_ids", []))
+        for claim in claims
+        if isinstance(claim, dict) and isinstance(claim.get("claim_id"), str)
+    }
+    normalized: list[dict] = []
+    seen: set[str] = set()
+    inconsistent = False
+    for check in checks:
+        if not isinstance(check, dict):
+            inconsistent = True
+            continue
+        claim_id = check.get("claim_id")
+        if claim_id not in claim_evidence or claim_id in seen:
+            inconsistent = True
+            continue
+        seen.add(claim_id)
+        expected = claim_evidence[claim_id]
+        if check.get("evidence_ids") != expected:
+            check = {
+                **check,
+                "status": "unsupported",
+                "evidence_ids": expected,
+                "reason": "Verifier changed the claim evidence mapping; revision is required.",
+            }
+            inconsistent = True
+        normalized.append(check)
+    verification["claim_checks"] = normalized
+    if set(claim_evidence) != seen:
+        inconsistent = True
+    if verification.get("verdict") == "pass" and (
+        inconsistent
+        or verification.get("unanswered_facts")
+        or verification.get("issues")
+        or any(check.get("status") != "supported" for check in normalized)
+    ):
+        verification["verdict"] = "revision_required"
 
 
 def _render_verified_partial_answer(

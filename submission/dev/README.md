@@ -4,10 +4,10 @@ This directory is only for local validation and is not included by
 `submission/build_submission.py` in the competition ZIP.
 
 The PowerShell entry point configures all local endpoints in its child process.
-It does not persist environment variables in the parent console and never reads
-or prints `.env`. Export `LLM_DEV` in the parent process before launching the
-script. The competition runtime continues to use organizer-provided environment
-variables and does not require `.env`.
+It does not persist environment variables in the parent console and never prints
+secret values. `ModelClient` reads the allowlisted `LLM_DEV` setting for local
+development. The competition runtime continues to prefer organizer-provided
+environment variables and does not require `.env`.
 
 ## Commands
 

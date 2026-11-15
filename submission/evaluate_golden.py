@@ -16,6 +16,10 @@ from statistics import mean
 from time import perf_counter
 from typing import Any
 
+import httpx
+
+from submission.model_client import _load_local_settings
+
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "tests" / "golden" / "PSB_golden_dataset_v1.1_codex.json"
 CORPUS = ROOT / "data" / "organizers" / "knowledge-base"
@@ -35,9 +39,12 @@ STAGE_NAMES = (
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run", action="store_true", help="execute the real model pipeline")
+    parser.add_argument("--dev-local", action="store_true", help="use the existing DEV_LOCAL services")
     parser.add_argument("--run-dir", type=Path, default=ROOT / "artifacts" / "golden-current")
     args = parser.parse_args(argv)
     cases = _load_cases()
+    if args.dev_local:
+        _configure_dev_local()
     state: dict[str, Any] = {
         "executed": False,
         "reason": _availability_reason(),
@@ -73,13 +80,50 @@ def _load_cases() -> list[dict[str, Any]]:
 
 def _availability_reason() -> str | None:
     has_url = any(os.environ.get(name) for name in ("LLM_BASE_URL", "BASE_URL", "OPENAI_BASE_URL"))
-    has_key = any(os.environ.get(name) for name in ("LLM_API_KEY", "OPENAI_API_KEY"))
+    local = _load_local_settings()
+    has_key = any(os.environ.get(name) for name in ("LLM_API_KEY", "OPENAI_API_KEY", "LLM_DEV")) or bool(local.get("LLM_DEV"))
     missing = [name for name, present in (("LLM_BASE_URL/BASE_URL/OPENAI_BASE_URL", has_url), ("LLM_API_KEY/OPENAI_API_KEY", has_key)) if not present]
     if missing:
         return "real run unavailable: process environment is missing " + ", ".join(missing)
     if not CORPUS.is_dir():
         return "real run unavailable: organizer corpus directory is missing"
     return None
+
+
+def _configure_dev_local() -> None:
+    local = _load_local_settings()
+    if not local.get("LLM_DEV") and not os.environ.get("LLM_DEV"):
+        raise RuntimeError("DEV_LOCAL unavailable: LLM_DEV is not configured")
+    checks = (
+        ("BGE-M3", "http://127.0.0.1:8081", "BAAI/bge-m3"),
+        ("Qwen3", "http://127.0.0.1:8080", None),
+    )
+    models: dict[str, str] = {}
+    for service, root, expected in checks:
+        try:
+            health = httpx.get(f"{root}/health", timeout=5.0)
+            health.raise_for_status()
+            payload = httpx.get(f"{root}/v1/models", timeout=5.0)
+            payload.raise_for_status()
+            ids = [str(row.get("id")) for row in payload.json().get("data", []) if row.get("id")]
+        except Exception as exc:
+            raise RuntimeError(f"DEV_LOCAL {service} unavailable: {type(exc).__name__}") from exc
+        if not ids or (expected and expected not in ids):
+            raise RuntimeError(f"DEV_LOCAL {service} exposes an incompatible model")
+        models[service] = expected or ids[0]
+    os.environ.update({
+        "RAG_RUNTIME_MODE": "DEV_LOCAL",
+        "LLM_BASE_URL": "https://matreshkaapi.mooo.com/v1",
+        "LLM_MODEL": "deepseek-v4.1-flash",
+        "EMBEDDER_BASE_URL": "http://127.0.0.1:8081/v1",
+        "EMBEDDER_API_KEY": "local",
+        "EMB_MODEL": models["BGE-M3"],
+        "RERANKER_BASE_URL": "http://127.0.0.1:8080/v1",
+        "RERANKER_API_KEY": "local",
+        "RERANKER_MODEL": models["Qwen3"],
+        "INDEX_DIR": str(ROOT / "submission" / "assets" / "bge_m3"),
+        "API_MODE": "live",
+    })
 
 
 def _execute(cases: list[dict[str, Any]], run_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float]:

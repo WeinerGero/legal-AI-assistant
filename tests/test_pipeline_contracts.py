@@ -4,6 +4,7 @@ import pytest
 
 from submission.pipeline import (
     _align_generation_citations,
+    _normalize_verification,
     _validate_generation,
     _validate_verification,
 )
@@ -62,4 +63,34 @@ def test_pass_with_unanswered_facts_is_rejected() -> None:
     }
     with pytest.raises(ValueError, match="unanswered_facts"):
         _validate_verification(verification, generation, EVIDENCE)
+
+
+def test_inconsistent_pass_is_safely_downgraded_for_revision() -> None:
+    generation = {
+        "answer_type": "answer",
+        "answer": "Плата составляет 450 000 рублей. [E001]",
+        "missing_facts": [],
+        "claims": [
+            {"claim_id": "C001", "text": "Плата составляет 450 000 рублей.", "evidence_ids": ["E001"]}
+        ],
+    }
+    verification = {
+        "verdict": "pass",
+        "claim_checks": [
+            {"claim_id": "C999", "status": "supported", "evidence_ids": ["E002"], "reason": "wrong claim"},
+            {"claim_id": "C001", "status": "supported", "evidence_ids": ["E002"], "reason": "wrong evidence"},
+        ],
+        "unanswered_facts": [],
+        "issues": [],
+    }
+    _normalize_verification(verification, generation)
+    assert verification["verdict"] == "revision_required"
+    assert verification["claim_checks"] == [
+        {
+            "claim_id": "C001",
+            "status": "unsupported",
+            "evidence_ids": ["E001"],
+            "reason": "Verifier changed the claim evidence mapping; revision is required.",
+        }
+    ]
 

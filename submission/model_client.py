@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Sequence
+from pathlib import Path
 from time import perf_counter, sleep
 from typing import Any
 
@@ -20,6 +21,29 @@ except ImportError:  # плоский корень submission.zip
     from recording import APIRecordingStore
 
 
+def _load_local_settings() -> dict[str, str]:
+    """Load the development-only allowlist without logging secret values."""
+    allowed = {
+        "LLM_DEV", "BASE_URL", "LLM_BASE_URL", "EMBEDDER_BASE_URL",
+        "RERANKER_BASE_URL", "LLM_API_KEY", "EMBEDDER_API_KEY",
+        "RERANKER_API_KEY", "LLM_MODEL", "EMB_MODEL", "RERANKER_MODEL",
+    }
+    try:
+        lines = Path(".env").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    result: dict[str, str] = {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        name, value = stripped.split("=", 1)
+        name = name.strip()
+        if name in allowed:
+            result[name] = value.strip().strip("'\"")
+    return result
+
+
 class ModelClient:
     def __init__(
         self,
@@ -32,14 +56,17 @@ class ModelClient:
         recording: APIRecordingStore | None = None,
         budget: RuntimeBudget | None = None,
     ) -> None:
+        local = _load_local_settings()
+
         def get(name: str, default: str = "") -> str:
-            value = (os.getenv(name) or "").strip()
+            value = (os.getenv(name) or local.get(name, "")).strip()
             return default if not value or value == name else value
 
-        local_key = (os.getenv("LLM_DEV") or "").strip()
+        local_key = (os.getenv("LLM_DEV") or local.get("LLM_DEV", "")).strip()
         process_api_key = (
             os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
         ).strip()
+        local_generic_key = local.get("LLM_API_KEY", "").strip()
         common_base_url = get("BASE_URL")
         self.base_url = (
             get("LLM_BASE_URL")
@@ -54,7 +81,7 @@ class ModelClient:
         self.api_key = (
             local_key
             if local_dev_mode and local_key
-            else process_api_key or local_key
+            else process_api_key or local_key or local_generic_key
         )
         self.embedding_base_url = (
             get("EMBEDDER_BASE_URL") or self.base_url
