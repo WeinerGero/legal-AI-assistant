@@ -129,5 +129,62 @@ poetry run python -m compileall core submission
 DATA_DIR=./data poetry run python submission/solution.py
 ```
 
+## Полный запуск юридического ассистента (RAG)
+
+Нужны только Docker Desktop с Compose и Git. Клонируйте репозиторий и создайте
+корневой файл `.env`:
+
+```bash
+copy .env.example .env
+```
+
+Заполните `POSTGRES_PASSWORD`, `APP_USER_LOGIN`, `APP_USER_PASSWORD` и `LLM_DEV`.
+`LLM_DEV` — ключ DeepSeek для `https://matreshkaapi.mooo.com/v1`; ключ не
+помещайте в Dockerfile и не публикуйте.
+
+### CPU
+
+```bash
+docker compose -f docker-compose.yml \
+  -f integration/docker-compose.rag.yml \
+  -f integration/docker-compose.models.yml up --build
+```
+
+### NVIDIA CUDA
+
+```bash
+docker compose -f docker-compose.yml \
+  -f integration/docker-compose.rag.yml \
+  -f integration/docker-compose.models.yml \
+  -f integration/docker-compose.models.cuda.yml up --build
+```
+
+При первом запуске Docker скачает BGE-M3 и Qwen3 в постоянные volumes.
+Повторный запуск использует уже загруженные веса. В текущем репозитории Qwen
+доступен в `Q3_K_M`; если Hugging Face недоступен по TLS, контейнер модели не
+запустится до устранения сетевой проблемы.
+
+Откройте интерфейс: <http://localhost:8082>. API: <http://localhost:8001/docs>.
+Проверка готовности RAG:
+
+```bash
+curl http://localhost:8001/integration/readyz
+```
+
+Остановка без удаления данных PostgreSQL и весов:
+
+```bash
+docker compose -f docker-compose.yml \
+  -f integration/docker-compose.rag.yml \
+  -f integration/docker-compose.models.yml down
+```
+
+Если `/integration/readyz` показывает `rag_ready=false`, проверьте:
+
+```bash
+docker compose ps
+docker compose logs api bge-m3 qwen3-reranker
+```
+
 Правила для людей и агентов — [`.agents`](.agents) и [`AGENTS.md`](AGENTS.md).
 Изменения зависимостей фиксируются в [`CHANGELOG.md`](CHANGELOG.md).
