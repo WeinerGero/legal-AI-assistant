@@ -305,7 +305,8 @@ class HybridIndex:
         bm_rankings = [[int(i) for i in row if i >= 0] for row in bm_ids]
         bm_set = {i for row in bm_rankings for i in row}
         self._record_rag("bm25", started, candidates_count=len(bm_set), query_count=len(lexical),
-                         ranked_document_ids=_ranked_doc_ids(bm_rankings, self.fragments))
+                         ranked_document_ids=_ranked_doc_ids(bm_rankings, self.fragments),
+                         ranked_fragment_ids=_ranked_fragment_ids(bm_rankings, self.fragments))
         self.client.recording.checkpoint("rag.bm25", bm_rankings)
 
         vec_rankings: list[list[int]] = []
@@ -326,7 +327,8 @@ class HybridIndex:
                 vec_set = {i for row in vec_rankings for i in row}
                 self._record_rag("faiss", started, candidates_count=len(vec_set),
                                  query_count=len(semantic),
-                                 ranked_document_ids=_ranked_doc_ids(vec_rankings, self.fragments))
+                                 ranked_document_ids=_ranked_doc_ids(vec_rankings, self.fragments),
+                                 ranked_fragment_ids=_ranked_fragment_ids(vec_rankings, self.fragments))
                 self.client.recording.checkpoint("rag.faiss", vec_rankings)
             except ReplayMismatchError:
                 raise
@@ -348,7 +350,8 @@ class HybridIndex:
         self._record_rag("fusion", started, candidates_count=len(candidates),
                          bm25_faiss_overlap=len(bm_set & vec_set) / len(bm_set | vec_set) if bm_set | vec_set else 0,
                          unique_documents_count=len({self.fragments[i].source for i in candidates}),
-                         ranked_document_ids=_ranked_doc_ids([candidates], self.fragments))
+                         ranked_document_ids=_ranked_doc_ids([candidates], self.fragments),
+                         ranked_fragment_ids=_ranked_fragment_ids([candidates], self.fragments))
         self.client.recording.checkpoint("rag.fusion", candidates)
 
         started = perf_counter()
@@ -387,6 +390,7 @@ class HybridIndex:
             score_available_rate=len(present_scores) / len(selected) if selected else 0.0,
             top_score=present_scores[0] if present_scores else None,
             ranked_document_ids=_ranked_doc_ids([[candidates[i] for i, _ in selected]], self.fragments),
+            ranked_fragment_ids=_ranked_fragment_ids([[candidates[i] for i, _ in selected]], self.fragments),
         )
         self.client.recording.checkpoint(
             "rag.rerank",
@@ -692,4 +696,18 @@ def _ranked_doc_ids(rankings: list[list[int]], fragments: list[Fragment]) -> lis
             if name not in seen:
                 result.append(name)
                 seen.add(name)
+    return result
+
+
+def _ranked_fragment_ids(rankings: list[list[int]], fragments: list[Fragment]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for ranking in rankings:
+        for index in ranking:
+            fragment = fragments[index]
+            payload = "\u241f".join((fragment.source, fragment.section, fragment.text))
+            identifier = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+            if identifier not in seen:
+                result.append(identifier)
+                seen.add(identifier)
     return result

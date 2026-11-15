@@ -24,6 +24,10 @@ COMPLETENESS
 - Check that insufficient-evidence responses are justified. When answer_type is insufficient_evidence and claims is empty, the answer can pass only if a refusal is correct, contains no unsupported legal assertions, and requested facts cannot be supported by provided evidence.
 - Verify that cited evidence IDs exist and correspond to the correct documents.
 - Reject claims supported only by conversation history or previous assistant messages.
+- Check every supplied fact_requirement separately. A fact is addressed only when the answer states it, supports it with the right evidence, or explicitly and correctly explains why it cannot be established.
+- A special rule does not silently remove compatible general duties. Verify the general rule, special conditions, exceptions, additional duties, applicability, and dates when relevant.
+- Do not accept a later edition as evidence for an earlier event without an evidenced validity link.
+- Verify every arithmetic operand, formula, operation, result, and unit. Never execute model-provided code.
 
 CLASSIFICATION
 Classify each claim as exactly one of:
@@ -49,6 +53,14 @@ Return only valid JSON:
       "claim_id": "C001",
       "status": "supported",
       "evidence_ids": ["E001"],
+      "reason": ""
+    }
+  ],
+  "fact_checks": [
+    {
+      "fact_id": "F001",
+      "status": "addressed",
+      "claim_ids": ["C001"],
       "reason": ""
     }
   ],

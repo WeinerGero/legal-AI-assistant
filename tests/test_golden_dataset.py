@@ -4,6 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
+import submission.evaluate_golden as golden_runner
+
 
 GOLDEN = Path(__file__).parent / "golden" / "PSB_golden_dataset_v1.1_codex.json"
 PARTITIONS = Path(__file__).parent / "golden" / "golden_partitions.json"
@@ -41,4 +45,48 @@ def test_partition_manifest_assigns_every_case_once() -> None:
     assert all(len(part["case_ids"]) == 5 for part in manifest["partitions"])
     assert len(assigned) == len(set(assigned)) == 65
     assert set(assigned) == {case["id"] for case in cases}
+
+
+def test_partition_persists_each_case_before_a_later_interruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case_ids = [f"T{number}" for number in range(1, 6)]
+    cases = [{"id": case_id, "query": f"question {case_id}"} for case_id in case_ids]
+    manifest = {"dataset_sha256": "test", "partitions": [{"partition_id": "P01", "case_ids": case_ids}]}
+    monkeypatch.setattr(golden_runner, "_ensure_run_metadata", lambda *_args: None)
+    attempts: list[str] = []
+
+    def interrupted_execute(selected: list[dict], _directory: Path):
+        case_id = str(selected[0]["id"])
+        attempts.append(case_id)
+        if case_id == "T2":
+            raise RuntimeError("interrupted")
+        return (
+            [{"id": case_id, "answer": f"answer {case_id}"}],
+            [{"kind": "outcome", "stage": "question", "question_id": case_id,
+              "final_state": "success", "duration_ms": 1.0, "error_type": None}],
+            1.0,
+        )
+
+    monkeypatch.setattr(golden_runner, "_execute", interrupted_execute)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        golden_runner._run_partition("P01", manifest, cases, tmp_path)
+    saved = golden_runner._read_answer_rows(tmp_path / "partitions" / "P01" / "answers.csv")
+    assert set(saved) == {"T1"}
+
+    def resumed_execute(selected: list[dict], _directory: Path):
+        case_id = str(selected[0]["id"])
+        attempts.append(case_id)
+        return (
+            [{"id": case_id, "answer": f"answer {case_id}"}],
+            [{"kind": "outcome", "stage": "question", "question_id": case_id,
+              "final_state": "success", "duration_ms": 1.0, "error_type": None}],
+            1.0,
+        )
+
+    monkeypatch.setattr(golden_runner, "_execute", resumed_execute)
+    golden_runner._run_partition("P01", manifest, cases, tmp_path)
+    saved = golden_runner._read_answer_rows(tmp_path / "partitions" / "P01" / "answers.csv")
+    assert set(saved) == set(case_ids)
+    assert attempts.count("T1") == 1
 

@@ -25,12 +25,16 @@ LEGAL ANALYSIS
 - Identify potentially false premises without treating them as established facts.
 - Respect the date relevant to the question, rather than automatically applying the latest legal version.
 - When ambiguity cannot be resolved, explicitly record it.
+- Split compound and negative questions into independent atomic requested facts, including requests to establish that a procedure or provision is absent.
+- For each legal issue include the general rule, applicable special rule, exceptions, additional obligations, applicability conditions, and relevant dates or versions when the question requires them.
+- Distinguish event_date, effective_date, edition_date, retrieval_date, and document validity period. Do not collapse them into one date.
 
 RETRIEVAL PLANNING
 - Produce concise lexical queries for exact names, numbers, clauses, dates, and terminology.
 - Produce semantic queries for the substance of the legal question.
 - Keep exact-match and semantic queries separate.
 - Preserve all independent parts of multi-part questions.
+- Create at least one retrieval formulation for every requested fact.
 - Do not invent missing identifiers or dates.
 
 Return only a valid JSON object with:

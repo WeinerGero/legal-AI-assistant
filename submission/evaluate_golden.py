@@ -97,26 +97,29 @@ def _run_partition(
         return
     run_root.mkdir(parents=True, exist_ok=True)
     _ensure_run_metadata(run_root, manifest)
-    attempt_number = int(state.get("attempts", 0)) + 1
-    attempt_dir = partition_dir / "attempts" / f"A{attempt_number:02d}"
-    state.update(status="running", attempts=attempt_number)
-    _atomic_json(state_path, state)
-    rows, events, elapsed = _execute(selected, attempt_dir)
-    outcomes = {
-        str(event.get("question_id")): event
-        for event in events
-        if event.get("kind") == "outcome" and event.get("stage") == "question"
-    }
-    if set(outcomes) != {str(case["id"]) for case in selected}:
-        state["status"] = "interrupted"
-        _atomic_json(state_path, state)
-        raise RuntimeError("partition attempt has no terminal outcome for every requested case")
     existing_rows = _read_answer_rows(partition_dir / "answers.csv")
-    for row in rows:
-        case_id = str(row["id"])
+    for case in selected:
+        case_id = str(case["id"])
+        attempt_number = int(state.get("attempts", 0)) + 1
+        attempt_dir = partition_dir / "attempts" / f"A{attempt_number:02d}-{case_id}"
+        state.update(status="running", attempts=attempt_number, active_case_id=case_id)
+        _atomic_json(state_path, state)
+        try:
+            rows, events, elapsed = _execute([case], attempt_dir)
+            outcomes = {
+                str(event.get("question_id")): event
+                for event in events
+                if event.get("kind") == "outcome" and event.get("stage") == "question"
+            }
+            if set(outcomes) != {case_id} or len(rows) != 1 or str(rows[0]["id"]) != case_id:
+                raise RuntimeError("case attempt has no single matching terminal outcome")
+        except Exception:
+            state.update(status="interrupted", active_case_id=case_id)
+            _atomic_json(state_path, state)
+            raise
         if case_id in existing_rows:
             raise RuntimeError(f"completed case would be overwritten: {case_id}")
-        existing_rows[case_id] = row
+        existing_rows[case_id] = rows[0]
         outcome = outcomes[case_id]
         state["cases"][case_id] = {
             "status": "complete",
@@ -124,16 +127,33 @@ def _run_partition(
             "error_type": outcome.get("error_type"),
             "attempt": attempt_number,
         }
-    ordered_rows = [existing_rows[case_id] for case_id in part["case_ids"] if case_id in existing_rows]
-    _atomic_csv(partition_dir / "answers.csv", ["id", "answer"], ordered_rows)
-    event_path = partition_dir / "events.jsonl"
-    prior = event_path.read_text(encoding="utf-8") if event_path.is_file() else ""
-    appended = "".join(json.dumps({**event, "attempt": attempt_number}, ensure_ascii=False, sort_keys=True) + "\n" for event in events)
-    _atomic_text(event_path, prior + appended)
-    state["status"] = "complete" if len(state["cases"]) == 5 else "partial"
-    state["calendar_time_ms"] = float(state.get("calendar_time_ms", 0.0)) + elapsed
-    _atomic_json(state_path, state)
-    _write_partition_files(partition_dir, events, state)
+        ordered_rows = [existing_rows[item] for item in part["case_ids"] if item in existing_rows]
+        _atomic_csv(partition_dir / "answers.csv", ["id", "answer"], ordered_rows)
+        event_path = partition_dir / "events.jsonl"
+        prior = event_path.read_text(encoding="utf-8") if event_path.is_file() else ""
+        appended = "".join(
+            json.dumps({**event, "attempt": attempt_number}, ensure_ascii=False, sort_keys=True) + "\n"
+            for event in events
+        )
+        _atomic_text(event_path, prior + appended)
+        state["status"] = "complete" if len(state["cases"]) == 5 else "partial"
+        state["calendar_time_ms"] = float(state.get("calendar_time_ms", 0.0)) + elapsed
+        state.pop("active_case_id", None)
+        _atomic_json(state_path, state)
+        all_events = [
+            json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        _write_partition_files(partition_dir, all_events, state)
+        print(json.dumps({
+            "partition_id": partition_id,
+            "case_id": case_id,
+            "completed": len(state["cases"]),
+            "remaining": 5 - len(state["cases"]),
+            "final_state": outcome.get("final_state"),
+            "duration_ms": outcome.get("duration_ms"),
+            "error_type": outcome.get("error_type"),
+        }, ensure_ascii=False, sort_keys=True), flush=True)
 
 
 def _ensure_run_metadata(run_root: Path, manifest: dict[str, Any]) -> None:

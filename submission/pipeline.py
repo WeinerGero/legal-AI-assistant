@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from time import perf_counter
 
@@ -40,7 +41,9 @@ class SubmissionPipeline:
     def run(self, question: str) -> str:
         started = perf_counter()
         try:
+            stage_started = perf_counter()
             messages = parse_conversation(question)
+            self._record_duration("question_parse", stage_started)
             analysis = self._json(
                 self.client.complete_json(
                     self.analysis_prompt,
@@ -49,11 +52,17 @@ class SubmissionPipeline:
                 )
             )
             _validate_analysis(analysis)
+            fact_requirements = _fact_requirements(analysis["requested_facts"])
+            stage_started = perf_counter()
             standalone = analysis["standalone_question"].strip()
             lexical = [standalone, *analysis["lexical_queries"]]
             semantic = analysis["semantic_queries"] or [standalone]
             entities = analysis["entities"]
             all_queries = [*lexical, *semantic]
+            self._record_duration(
+                "query_preparation", stage_started,
+                fact_count=len(fact_requirements), query_count=len(all_queries),
+            )
             self._record_quality(
                 "analysis", context_turns=len(messages), language_detected=1,
                 entities_count=len(entities),
@@ -66,6 +75,7 @@ class SubmissionPipeline:
             fragments = self.index.search_queries(
                 lexical, semantic, top_k=self.top_k, final_k=self.evidence_k
             )
+            stage_started = perf_counter()
             evidence = [
                 {
                     "evidence_id": f"E{number:03d}",
@@ -78,15 +88,23 @@ class SubmissionPipeline:
                 for number, item in enumerate(fragments, 1)
             ]
             self.client.recording.checkpoint("evidence.order", evidence)
+            self._record_duration(
+                "evidence_selection", stage_started,
+                evidence_count=len(evidence),
+                fragment_ids=[_evidence_trace_id(item) for item in evidence],
+            )
             generation_request = {
                 "mode": "initial",
                 "target_language": analysis["target_language"],
                 "question": standalone,
                 "requested_facts": analysis["requested_facts"],
+                "fact_requirements": fact_requirements,
                 "evidence": evidence,
             }
             generation = self._generate(generation_request, evidence)
-            verification = self._verify(messages, analysis, generation, evidence)
+            verification = self._verify(
+                messages, analysis, generation, evidence, fact_requirements=fact_requirements
+            )
             revised = verification["verdict"] != "pass"
             revision_allowed = (
                 revised
@@ -96,6 +114,11 @@ class SubmissionPipeline:
                 )
             )
             if revision_allowed:
+                if verification.get("unanswered_facts") or generation.get("answer_type") == "insufficient_evidence":
+                    evidence = self._expanded_evidence_search(
+                        standalone, verification, evidence
+                    )
+                    generation_request["evidence"] = evidence
                 generation = self._generate(
                     {
                         **generation_request,
@@ -105,22 +128,34 @@ class SubmissionPipeline:
                     },
                     evidence,
                 )
-                verification = self._verify(messages, analysis, generation, evidence)
+                verification = self._verify(
+                    messages,
+                    analysis,
+                    generation,
+                    evidence,
+                    fact_requirements=fact_requirements,
+                    stage="reverification",
+                )
                 if self.client.metrics is not None:
                     self.client.metrics.record("budget", "revision", executed=1)
             elif revised and self.client.metrics is not None:
                 self.client.metrics.record("budget", "revision", executed=0)
             if verification["verdict"] == "pass":
+                render_started = perf_counter()
                 result = _render_citations(
                     generation, evidence, target_language=analysis["target_language"]
                 )
+                self._record_duration("citation_rendering", render_started)
+                final_started = perf_counter()
                 retained_claims = len(generation["claims"])
                 answer_state = (
                     "legal_refusal"
                     if generation.get("answer_type") == "insufficient_evidence"
                     else "success"
                 )
+                self._record_duration("final_rendering", final_started)
             else:
+                render_started = perf_counter()
                 partial = _render_verified_partial_answer(
                     generation,
                     verification,
@@ -134,6 +169,9 @@ class SubmissionPipeline:
                 else:
                     result, retained_claims = partial
                     answer_state = "success"
+                self._record_duration(
+                    "final_rendering", render_started, partial=int(partial is not None)
+                )
             total_claims = len(generation["claims"])
             self.last_outcome = {
                 "state": answer_state,
@@ -244,8 +282,11 @@ class SubmissionPipeline:
                 stage=stage,
             )
         )
+        validation_started = perf_counter()
         _align_generation_citations(generation)
         _validate_generation(generation, evidence)
+        _validate_decimal_calculations(generation)
+        self._record_duration("structure_validation", validation_started)
         claims = generation["claims"]
         references = [item for claim in claims for item in claim["evidence_ids"]]
         self._record_quality(
@@ -265,6 +306,9 @@ class SubmissionPipeline:
         analysis: dict,
         generation: dict,
         evidence: list[dict],
+        *,
+        fact_requirements: list[dict] | None = None,
+        stage: str = "verification",
     ) -> dict:
         verification = self._json(
             self.client.complete_json(
@@ -275,16 +319,17 @@ class SubmissionPipeline:
                         "target_language": analysis["target_language"],
                         "standalone_question": analysis["standalone_question"],
                         "requested_facts": analysis["requested_facts"],
+                        "fact_requirements": fact_requirements or [],
                         "generation": generation,
                         "evidence": evidence,
                     },
                     ensure_ascii=False,
                 ),
-                stage="verification",
+                stage=stage,
             )
         )
-        _normalize_verification(verification, generation)
-        _validate_verification(verification, generation, evidence)
+        _normalize_verification(verification, generation, fact_requirements or [])
+        _validate_verification(verification, generation, evidence, fact_requirements or [])
         checks = verification["claim_checks"]
         self._record_quality(
             "verification", checked_claims_count=len(checks),
@@ -294,8 +339,64 @@ class SubmissionPipeline:
             unanswered_facts_count=len(verification["unanswered_facts"]),
             issues_count=len(verification["issues"]),
             passed=int(verification["verdict"] == "pass"),
+            fact_checks_count=len(verification.get("fact_checks", [])),
+            fact_coverage=sum(
+                check.get("status") == "addressed"
+                for check in verification.get("fact_checks", [])
+            ) / len(fact_requirements) if fact_requirements else 1.0,
         )
         return verification
+
+    def _expanded_evidence_search(
+        self,
+        standalone: str,
+        verification: dict,
+        evidence: list[dict],
+    ) -> list[dict]:
+        started = perf_counter()
+        missing = [str(item).strip() for item in verification.get("unanswered_facts", []) if str(item).strip()]
+        if not missing:
+            return evidence
+        fragments = self.index.search_queries(
+            [standalone, *missing], missing, top_k=self.top_k, final_k=self.evidence_k
+        )
+        merged: list[dict] = []
+        seen: set[tuple[str, str, str]] = set()
+        for item in [
+            *evidence,
+            *(
+                {
+                    "evidence_id": "",
+                    "document": fragment.source,
+                    "section": self.index.verified_citation_section(fragment),
+                    "dates": fragment.dates,
+                    "relations": fragment.relations,
+                    "text": fragment.text,
+                }
+                for fragment in fragments
+            ),
+        ]:
+            key = (str(item["document"]), str(item["section"]), str(item["text"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append({**item, "evidence_id": f"E{len(merged) + 1:03d}"})
+            if len(merged) >= self.evidence_k * 2:
+                break
+        self.client.recording.checkpoint("evidence.expanded", merged)
+        self._record_duration(
+            "expanded_search", started, missing_fact_count=len(missing),
+            evidence_count=len(merged), fragment_ids=[_evidence_trace_id(item) for item in merged],
+        )
+        return merged
+
+    def _record_duration(self, stage: str, started: float, **fields: object) -> None:
+        if self.client.metrics is not None:
+            self.client.metrics.record(
+                "pipeline", stage,
+                duration_ms=round((perf_counter() - started) * 1000, 3),
+                error_count=0, retry_count=0, **fields,
+            )
 
     def _record_quality(self, stage: str, **fields: object) -> None:
         if self.client.metrics is not None:
@@ -511,7 +612,12 @@ def _align_generation_citations(generation: dict) -> None:
     generation["answer"] = "\n".join(rendered)
 
 
-def _validate_verification(verification: dict, generation: dict, evidence: list[dict]) -> None:
+def _validate_verification(
+    verification: dict,
+    generation: dict,
+    evidence: list[dict],
+    fact_requirements: list[dict] | None = None,
+) -> None:
     verdict = verification.get("verdict")
     if verdict not in VERDICTS:
         raise ValueError(f"неизвестный verification verdict: {verdict}")
@@ -542,6 +648,23 @@ def _validate_verification(verification: dict, generation: dict, evidence: list[
     issues = verification.get("issues")
     if not isinstance(unanswered, list) or not isinstance(issues, list):
         raise ValueError("verification completeness fields должны быть массивами")
+    requirements = fact_requirements or []
+    fact_checks = verification.get("fact_checks", [])
+    if not isinstance(fact_checks, list):
+        raise ValueError("verification.fact_checks должен быть массивом")
+    expected_fact_ids = {item["fact_id"] for item in requirements}
+    checked_fact_ids: set[str] = set()
+    for check in fact_checks:
+        if (
+            not isinstance(check, dict)
+            or check.get("fact_id") not in expected_fact_ids
+            or check.get("fact_id") in checked_fact_ids
+            or check.get("status") not in {"addressed", "unsupported", "missing"}
+            or not isinstance(check.get("claim_ids", []), list)
+            or not set(check.get("claim_ids", [])) <= claim_ids
+        ):
+            raise ValueError("verification содержит некорректную проверку обязательного факта")
+        checked_fact_ids.add(check["fact_id"])
     if verdict == "pass":
         if generation.get("answer_type") == "insufficient_evidence" and (
             generation["claims"] or not generation.get("missing_facts")
@@ -555,9 +678,17 @@ def _validate_verification(verification: dict, generation: dict, evidence: list[
             raise ValueError("verification pass содержит unanswered_facts")
         if issues:
             raise ValueError("verification pass содержит issues")
+        if checked_fact_ids != expected_fact_ids or any(
+            check["status"] != "addressed" for check in fact_checks
+        ):
+            raise ValueError("verification pass не подтвердил каждый обязательный факт")
 
 
-def _normalize_verification(verification: dict, generation: dict) -> None:
+def _normalize_verification(
+    verification: dict,
+    generation: dict,
+    fact_requirements: list[dict] | None = None,
+) -> None:
     """Downgrade inconsistent verifier output without accepting unsupported claims."""
     checks = verification.get("claim_checks")
     claims = generation.get("claims")
@@ -591,6 +722,29 @@ def _normalize_verification(verification: dict, generation: dict) -> None:
             inconsistent = True
         normalized.append(check)
     verification["claim_checks"] = normalized
+    requirements = fact_requirements or []
+    expected_fact_ids = {item["fact_id"] for item in requirements}
+    fact_checks = verification.get("fact_checks")
+    if not isinstance(fact_checks, list):
+        fact_checks = []
+    normalized_facts: list[dict] = []
+    seen_facts: set[str] = set()
+    for check in fact_checks:
+        if not isinstance(check, dict) or check.get("fact_id") not in expected_fact_ids or check.get("fact_id") in seen_facts:
+            inconsistent = True
+            continue
+        seen_facts.add(check["fact_id"])
+        normalized_facts.append(check)
+    for requirement in requirements:
+        if requirement["fact_id"] not in seen_facts:
+            normalized_facts.append({
+                "fact_id": requirement["fact_id"],
+                "status": "missing",
+                "claim_ids": [],
+                "reason": "Required fact was not explicitly checked.",
+            })
+            inconsistent = True
+    verification["fact_checks"] = normalized_facts
     if set(claim_evidence) != seen:
         inconsistent = True
     if verification.get("verdict") == "pass" and (
@@ -598,6 +752,7 @@ def _normalize_verification(verification: dict, generation: dict) -> None:
         or verification.get("unanswered_facts")
         or verification.get("issues")
         or any(check.get("status") != "supported" for check in normalized)
+        or any(check.get("status") != "addressed" for check in normalized_facts)
     ):
         verification["verdict"] = "revision_required"
 
@@ -616,8 +771,6 @@ def _render_verified_partial_answer(
     checks = verification.get("claim_checks", [])
     claim_ids = {claim["claim_id"] for claim in claims}
     if {check.get("claim_id") for check in checks} != claim_ids:
-        return None
-    if any(check.get("status") == "contradicted" for check in checks):
         return None
     supported_ids = {
         check["claim_id"]
@@ -665,14 +818,76 @@ def _render_verified_partial_answer(
         ),
         "claims": retained,
     }
-    return (
-        _render_citations(
+    rendered = _render_citations(
             partial_generation,
             evidence,
             target_language=target_language,
-        ),
-        len(retained),
+        )
+    limitations = [str(item).strip() for item in verification.get("unanswered_facts", []) if str(item).strip()]
+    limitations.extend(
+        str(item).strip() for item in generation.get("missing_facts", [])
+        if str(item).strip() and str(item).strip() not in limitations
     )
+    if limitations:
+        label = "Не подтверждено документами" if target_language.lower().startswith("ru") else "Not established by the supplied documents"
+        rendered += "\n\n" + label + ": " + "; ".join(limitations) + "."
+    return rendered, len(retained)
+
+
+def _fact_requirements(requested_facts: list[object]) -> list[dict[str, str]]:
+    requirements: list[dict[str, str]] = []
+    for item in requested_facts:
+        description = str(item).strip()
+        if description:
+            requirements.append({
+                "fact_id": f"F{len(requirements) + 1:03d}",
+                "description": description,
+            })
+    return requirements
+
+
+def _evidence_trace_id(item: dict) -> str:
+    import hashlib
+
+    payload = "\u241f".join(
+        str(item.get(name) or "") for name in ("document", "section", "text")
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _validate_decimal_calculations(generation: dict) -> None:
+    calculations = generation.get("calculations", [])
+    if calculations is None:
+        return
+    if not isinstance(calculations, list):
+        raise ValueError("generation.calculations должен быть массивом")
+    for row in calculations:
+        if not isinstance(row, dict) or row.get("operation") not in {"add", "subtract", "multiply", "divide", "percent"}:
+            raise ValueError("неподдерживаемая детерминированная операция")
+        try:
+            operands = [Decimal(str(value)) for value in row.get("operands", [])]
+            claimed = Decimal(str(row["result"]))
+            operation = row["operation"]
+            if not operands:
+                raise InvalidOperation
+            if operation == "add":
+                actual = sum(operands, Decimal("0"))
+            elif operation == "subtract" and len(operands) == 2:
+                actual = operands[0] - operands[1]
+            elif operation == "multiply":
+                actual = Decimal("1")
+                for operand in operands:
+                    actual *= operand
+            elif operation == "divide" and len(operands) == 2:
+                actual = operands[0] / operands[1]
+            elif operation == "percent" and len(operands) == 2:
+                actual = operands[0] * operands[1] / Decimal("100")
+            else:
+                raise InvalidOperation
+        except (InvalidOperation, KeyError, ZeroDivisionError):
+            raise ValueError("некорректные операнды детерминированного вычисления") from None
+        if actual != claimed:
+            raise ValueError("числовой результат не совпадает с детерминированным вычислением")
 
 
 def _render_citations(generation: dict, evidence: list[dict], *, target_language: str) -> str:

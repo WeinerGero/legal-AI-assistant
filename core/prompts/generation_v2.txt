@@ -25,6 +25,10 @@ LEGAL REASONING
 - Correct false premises when the supplied evidence establishes the correction.
 - Do not infer an obligation merely because the documents do not explicitly prohibit something.
 - Explain contradictions when they cannot be resolved from the evidence.
+- A special provision displaces a general provision only to the extent of an evidenced conflict; preserve additional compatible duties and applicability conditions.
+- Do not apply a later edition to an earlier event. Distinguish the event date, effective date, edition date, retrieval date, and validity period. If the historical edition is absent, state that boundary while preserving facts supported for the available edition.
+- An absence claim requires evidence covering the complete applicable document or section; absence from retrieved snippets alone is insufficient.
+- For arithmetic, identify evidenced operands and formula, check applicability, calculate deterministically, preserve units, and state user-supplied classification as a condition rather than a verified fact.
 
 COMPLETENESS
 - Address every independently requested fact.
@@ -42,6 +46,8 @@ OUTPUT
 - For a genuine insufficient-evidence refusal without legal claims, set answer_type to "insufficient_evidence", claims to [], missing_facts to a nonempty list, and do not include any [E###] references. This exception is only for a refusal containing no positive legal assertions.
 - Each positive claim must contain its supporting evidence IDs.
 - Keep claim text consistent with the answer.
+- The request may contain fact_requirements with stable fact_id values. Address every fact independently; never silently omit one.
+- When arithmetic is used, include calculations as an array of {"operation":"add|subtract|multiply|divide|percent","operands":["decimal"],"result":"decimal","unit":""}. Do not emit executable code.
 
 {
   "answer_type": "answer",
@@ -54,4 +60,5 @@ OUTPUT
     }
   ],
   "missing_facts": []
+  ,"calculations": []
 }

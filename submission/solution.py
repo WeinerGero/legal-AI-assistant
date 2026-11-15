@@ -458,10 +458,18 @@ def _worker_main(argv: list[str] | None = None) -> int:
                             answers[position] = answer
                             completed_positions.add(position)
                             completed += 1
+                            write_started = perf_counter()
                             write_submission_atomic(
                                 output_path,
                                 [(qid, answers[i]) for i, (qid, _q) in enumerate(questions)],
                             )
+                            if metrics is not None:
+                                metrics.set_question(questions[position][0])
+                                metrics.record(
+                                    "pipeline", "csv_write",
+                                    duration_ms=round((perf_counter() - write_started) * 1000, 3),
+                                    error_count=0, retry_count=0,
+                                )
                             if completed % 10 == 0 or completed == len(questions):
                                 print(f"Обработано {completed}/{len(questions)}", flush=True)
                     for future in pending:
@@ -475,10 +483,18 @@ def _worker_main(argv: list[str] | None = None) -> int:
                     position, answer = solve(i, qid, q)
                     answers[position] = answer
                     completed_positions.add(position)
+                    write_started = perf_counter()
                     write_submission_atomic(
                         output_path,
                         [(row_id, answers[j]) for j, (row_id, _row_q) in enumerate(questions)],
                     )
+                    if metrics is not None:
+                        metrics.set_question(qid)
+                        metrics.record(
+                            "pipeline", "csv_write",
+                            duration_ms=round((perf_counter() - write_started) * 1000, 3),
+                            error_count=0, retry_count=0,
+                        )
                     if (i + 1) % 10 == 0 or i + 1 == len(questions):
                         print(f"Обработано {i + 1}/{len(questions)}", flush=True)
             rows = [(qid, answers[i]) for i, (qid, _question) in enumerate(questions)]
