@@ -24,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "tests" / "golden" / "PSB_golden_dataset_v1.1_codex.json"
 CORPUS = ROOT / "data" / "organizers" / "knowledge-base"
 REPORTS = ROOT
+PARTITIONS_PATH = ROOT / "tests" / "golden" / "golden_partitions.json"
+PARTITION_RUNS = ROOT / "artifacts" / "golden-runs"
 BASELINE_COMMIT = "6f11e3ba3bfbc4ef6b3ab738f407b5c3aa1bbdfa"
 REQUIRED_FIELDS = (
     "id", "category", "title", "query", "expected_behavior", "gold_answer", "failure_conditions"
@@ -38,33 +40,206 @@ STAGE_NAMES = (
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run", action="store_true", help="execute the real model pipeline")
+    parser.add_argument("--partition", choices=[f"P{index:02d}" for index in range(1, 14)])
+    parser.add_argument("--run-id")
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--recalculate", action="store_true")
     parser.add_argument("--dev-local", action="store_true", help="use the existing DEV_LOCAL services")
-    parser.add_argument("--run-dir", type=Path, default=ROOT / "artifacts" / "golden-current")
     args = parser.parse_args(argv)
     cases = _load_cases()
+    manifest = _load_partition_manifest(cases)
+    run_id = args.run_id or f"local-{_git('rev-parse', '--short=7', 'HEAD')}"
+    run_root = PARTITION_RUNS / run_id
+    if args.status or (not args.partition and not args.recalculate):
+        _print_partition_status(manifest, run_root)
+        return 0
     if args.dev_local:
         _configure_dev_local()
-    state: dict[str, Any] = {
-        "executed": False,
-        "reason": _availability_reason(),
-        "commit": _git("rev-parse", "HEAD"),
-        "baseline_commit": BASELINE_COMMIT,
-        "golden_sha256": _sha256(GOLDEN),
-        "corpus_sha256": _corpus_hash(),
-        "case_count": len(cases),
-        "run_dir": str(args.run_dir),
+    if args.partition:
+        reason = _availability_reason()
+        if reason:
+            raise RuntimeError(reason)
+        _run_partition(args.partition, manifest, cases, run_root)
+    _recalculate_partition_run(manifest, cases, run_root)
+    _print_partition_status(manifest, run_root)
+    return 0
+
+
+def _load_partition_manifest(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    if not PARTITIONS_PATH.is_file():
+        raise FileNotFoundError(f"partition manifest is missing: {PARTITIONS_PATH}")
+    manifest = json.loads(PARTITIONS_PATH.read_text(encoding="utf-8-sig"))
+    partitions = manifest.get("partitions") if isinstance(manifest, dict) else None
+    if manifest.get("dataset_sha256") != _sha256(GOLDEN) or not isinstance(partitions, list) or len(partitions) != 13:
+        raise ValueError("partition manifest does not match the golden dataset")
+    ids = [str(case["id"]) for case in cases]
+    assigned = [str(case_id) for part in partitions for case_id in part.get("case_ids", [])]
+    if len(assigned) != 65 or len(set(assigned)) != 65 or set(assigned) != set(ids):
+        raise ValueError("partition manifest must assign every case exactly once")
+    if any(part.get("partition_size") != 5 or len(part.get("case_ids", [])) != 5 for part in partitions):
+        raise ValueError("each partition must contain exactly five cases")
+    return manifest
+
+
+def _run_partition(
+    partition_id: str,
+    manifest: dict[str, Any],
+    cases: list[dict[str, Any]],
+    run_root: Path,
+) -> None:
+    part = next(item for item in manifest["partitions"] if item["partition_id"] == partition_id)
+    partition_dir = run_root / "partitions" / partition_id
+    state_path = partition_dir / "state.json"
+    state = _read_json(state_path, {"partition_id": partition_id, "cases": {}, "status": "pending", "attempts": 0})
+    completed = {case_id for case_id, row in state.get("cases", {}).items() if row.get("status") == "complete"}
+    selected = [case for case in cases if str(case["id"]) in part["case_ids"] and str(case["id"]) not in completed]
+    if not selected:
+        return
+    run_root.mkdir(parents=True, exist_ok=True)
+    _ensure_run_metadata(run_root, manifest)
+    attempt_number = int(state.get("attempts", 0)) + 1
+    attempt_dir = partition_dir / "attempts" / f"A{attempt_number:02d}"
+    state.update(status="running", attempts=attempt_number)
+    _atomic_json(state_path, state)
+    rows, events, elapsed = _execute(selected, attempt_dir)
+    outcomes = {
+        str(event.get("question_id")): event
+        for event in events
+        if event.get("kind") == "outcome" and event.get("stage") == "question"
     }
+    if set(outcomes) != {str(case["id"]) for case in selected}:
+        state["status"] = "interrupted"
+        _atomic_json(state_path, state)
+        raise RuntimeError("partition attempt has no terminal outcome for every requested case")
+    existing_rows = _read_answer_rows(partition_dir / "answers.csv")
+    for row in rows:
+        case_id = str(row["id"])
+        if case_id in existing_rows:
+            raise RuntimeError(f"completed case would be overwritten: {case_id}")
+        existing_rows[case_id] = row
+        outcome = outcomes[case_id]
+        state["cases"][case_id] = {
+            "status": "complete",
+            "final_state": outcome.get("final_state"),
+            "error_type": outcome.get("error_type"),
+            "attempt": attempt_number,
+        }
+    ordered_rows = [existing_rows[case_id] for case_id in part["case_ids"] if case_id in existing_rows]
+    _atomic_csv(partition_dir / "answers.csv", ["id", "answer"], ordered_rows)
+    event_path = partition_dir / "events.jsonl"
+    prior = event_path.read_text(encoding="utf-8") if event_path.is_file() else ""
+    appended = "".join(json.dumps({**event, "attempt": attempt_number}, ensure_ascii=False, sort_keys=True) + "\n" for event in events)
+    _atomic_text(event_path, prior + appended)
+    state["status"] = "complete" if len(state["cases"]) == 5 else "partial"
+    state["calendar_time_ms"] = float(state.get("calendar_time_ms", 0.0)) + elapsed
+    _atomic_json(state_path, state)
+    _write_partition_files(partition_dir, events, state)
+
+
+def _ensure_run_metadata(run_root: Path, manifest: dict[str, Any]) -> None:
+    path = run_root / "run.json"
+    current = {
+        "run_id": run_root.name,
+        "commit": _git("rev-parse", "HEAD"),
+        "dataset_sha256": manifest["dataset_sha256"],
+        "corpus_sha256": _corpus_hash(),
+        "models": {
+            "llm": os.environ.get("LLM_MODEL"),
+            "embedding": os.environ.get("EMB_MODEL"),
+            "reranker": os.environ.get("RERANKER_MODEL"),
+        },
+        "parameters": {
+            "temperature": os.environ.get("TEMPERATURE", "0.0"),
+            "max_workers": os.environ.get("MAX_WORKERS"),
+            "time_limit_seconds": os.environ.get("TIME_LIMIT_SECONDS"),
+        },
+    }
+    if path.is_file() and _read_json(path, {}) != current:
+        raise RuntimeError("run_id already belongs to different code, models, or parameters")
+    if not path.is_file():
+        _atomic_json(path, current)
+
+
+def _write_partition_files(partition_dir: Path, events: list[dict[str, Any]], state: dict[str, Any]) -> None:
+    _write_event_csv_at(partition_dir / "timings.csv", events, lambda event: isinstance(event.get("duration_ms"), (int, float)))
+    _write_event_csv_at(partition_dir / "llm_metrics.csv", events, lambda event: event.get("kind") in {"llm", "api"})
+    errors = [event for event in events if event.get("error_count") or event.get("error_type")]
+    _atomic_json(partition_dir / "errors.json", errors)
+    _atomic_text(
+        partition_dir / "report.md",
+        f"# {state['partition_id']}\n\n- Status: {state['status']}\n- Completed: {len(state['cases'])}/5\n"
+        f"- Calendar time: {state.get('calendar_time_ms', 0.0):.3f} ms\n",
+    )
+
+
+def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, Any]], run_root: Path) -> None:
     rows: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
-    if args.run:
-        if state["reason"]:
-            raise RuntimeError(state["reason"])
-        rows, events, elapsed = _execute(cases, args.run_dir)
-        state.update(executed=True, reason=None, elapsed_ms=elapsed, completed=len(rows))
+    for part in manifest["partitions"]:
+        directory = run_root / "partitions" / part["partition_id"]
+        rows.extend(_read_answer_rows(directory / "answers.csv").values())
+        event_path = directory / "events.jsonl"
+        if event_path.is_file():
+            events.extend(json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip())
+    state = {
+        "reason": None,
+        "commit": _git("rev-parse", "HEAD"),
+        "baseline_commit": BASELINE_COMMIT,
+        "golden_sha256": manifest["dataset_sha256"],
+        "corpus_sha256": _corpus_hash(),
+        "case_count": 65,
+        "run_dir": str(run_root),
+    }
     _write_outputs(cases, rows, events, state)
-    print(json.dumps(state, ensure_ascii=False, indent=2))
-    return 0
+
+
+def _print_partition_status(manifest: dict[str, Any], run_root: Path) -> None:
+    completed = 0
+    result = []
+    for part in manifest["partitions"]:
+        state = _read_json(run_root / "partitions" / part["partition_id"] / "state.json", {})
+        count = len([row for row in state.get("cases", {}).values() if row.get("status") == "complete"])
+        completed += count
+        result.append({"partition_id": part["partition_id"], "completed": count, "status": state.get("status", "pending")})
+    print(json.dumps({"run_id": run_root.name, "completed": completed, "remaining": 65 - completed, "partitions": result}, ensure_ascii=False, indent=2))
+
+
+def _read_answer_rows(path: Path) -> dict[str, dict[str, str]]:
+    if not path.is_file():
+        return {}
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        return {str(row["id"]): row for row in csv.DictReader(handle)}
+
+
+def _read_json(path: Path, default: Any) -> Any:
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else default
+
+
+def _atomic_text(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(value, encoding="utf-8")
+    temporary.replace(path)
+
+
+def _atomic_json(path: Path, value: Any) -> None:
+    _atomic_text(path, json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
+def _atomic_csv(path: Path, fields: list[str], rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    temporary.replace(path)
+
+
+def _write_event_csv_at(path: Path, events: list[dict[str, Any]], predicate) -> None:
+    selected = [event for event in events if predicate(event)]
+    keys = sorted({key for event in selected for key in event}) or ["kind", "stage", "question_id", "value"]
+    _atomic_csv(path, keys, [{key: _cell(event.get(key, "")) for key in keys} for event in selected])
 
 
 def _load_cases() -> list[dict[str, Any]]:
