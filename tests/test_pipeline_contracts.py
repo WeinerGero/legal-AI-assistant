@@ -44,6 +44,18 @@ def test_structured_claims_are_rendered_with_matching_markers() -> None:
     ]
 
 
+def test_refusal_drops_stray_evidence_markers_without_inventing_claims() -> None:
+    generation = {
+        "answer_type": "insufficient_evidence",
+        "answer": "В документах нет подтверждённых сведений. [E001]",
+        "missing_facts": ["запрошенные реквизиты"],
+        "claims": [],
+    }
+    _align_generation_citations(generation)
+    _validate_generation(generation, EVIDENCE)
+    assert generation["answer"] == "В документах нет подтверждённых сведений."
+
+
 def test_pass_with_unanswered_facts_is_rejected() -> None:
     generation = {
         "answer_type": "answer",

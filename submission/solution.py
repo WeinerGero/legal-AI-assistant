@@ -383,8 +383,9 @@ def _worker_main(argv: list[str] | None = None) -> int:
                     except BudgetExceededError as exc:
                         terminal_error = type(exc).__name__
                         answer = DEFAULT_FAILURE_ANSWER
-                    except RequiredLocalServiceError:
-                        raise
+                    except RequiredLocalServiceError as exc:
+                        terminal_error = type(exc).__name__
+                        answer = DEFAULT_FAILURE_ANSWER
                     except Exception as exc:
                         terminal_error = type(exc).__name__
                         print(f"Вопрос {question_id}: {type(exc).__name__}: {exc}", file=sys.stderr)

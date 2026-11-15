@@ -488,7 +488,15 @@ def _validate_generation(generation: dict, evidence: list[dict]) -> None:
 def _align_generation_citations(generation: dict) -> None:
     """Render the user answer from atomic claims and their structured evidence IDs."""
     claims = generation.get("claims")
-    if not isinstance(claims, list) or not claims:
+    if not isinstance(claims, list):
+        return
+    if not claims:
+        if generation.get("answer_type") == "insufficient_evidence" and isinstance(
+            generation.get("answer"), str
+        ):
+            generation["answer"] = re.sub(
+                r"\s*\[E\d{3,}\]", "", generation["answer"]
+            ).strip()
         return
     rendered: list[str] = []
     for claim in claims:
