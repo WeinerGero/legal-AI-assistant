@@ -1,11 +1,12 @@
-# Backend MVP
+# MVP бэкенда
 
-The API stores one automatically created user, conversations, messages, and
-structured answers. It uses PostgreSQL in Docker Compose and SQLite when run
-locally without `DATABASE_URL` or `DB_HOST`.
+API хранит автоматически создаваемого пользователя, диалоги, сообщения и
+структурированные ответы. В Docker Compose используется PostgreSQL; при
+локальном запуске без `DATABASE_URL` или `DB_HOST` используется SQLite.
 
-Before `docker compose up --build`, set these variables in the repository-root
-`.env` file:
+## Запуск через Docker Compose
+
+В корневом `.env` задайте значения:
 
 ```dotenv
 POSTGRES_PASSWORD=<set-me>
@@ -13,45 +14,73 @@ APP_USER_LOGIN=<set-me>
 APP_USER_PASSWORD=<set-me>
 ```
 
-The API is available at `http://localhost:${API_PORT:-8001}`; OpenAPI docs are
-at `/docs`. Set `API_PORT` in `.env` to override the host port. After login,
-send the returned bearer token in the `Authorization` header.
-Main routes are `/api/v1/auth/*`, `/api/v1/conversations`, and
-`/api/v1/conversations/{id}/messages`.
+Запустите приложение из корня репозитория:
 
-Send a message with the selected document context:
+```bash
+docker compose up --build
+```
+
+API доступно по адресу `http://localhost:${API_PORT:-8001}`, документация
+Swagger — по адресу `/docs`. Порт по умолчанию — `8001`; его можно изменить
+переменной `API_PORT` в `.env`.
+
+## Вход и работа с диалогами
+
+При запуске API пользователь автоматически создаётся из `APP_USER_LOGIN` и
+`APP_USER_PASSWORD`. Чтобы войти, отправьте `POST /api/v1/auth/login` с JSON:
 
 ```json
 {
-  "content": "Question about the contract",
+  "login": "<логин из .env>",
+  "password": "<пароль из .env>"
+}
+```
+
+Передавайте полученный `access_token` в заголовке
+`Authorization: Bearer <access_token>`. Основные маршруты:
+
+- `/api/v1/auth/*` — вход, выход и профиль пользователя;
+- `/api/v1/conversations` — список и создание диалогов;
+- `/api/v1/conversations/{id}/messages` — история и отправка сообщений.
+
+Чтобы создать диалог, отправьте `POST /api/v1/conversations`. Чтобы задать
+вопрос, отправьте `POST /api/v1/conversations/{id}/messages`:
+
+```json
+{
+  "content": "Вопрос по договору",
   "context": {
     "active_document": {
-      "contract_number": "<contract-number>",
-      "counterparty": "<counterparty>"
+      "contract_number": "<номер договора>",
+      "counterparty": "<контрагент>"
     },
     "event_date": null
   }
 }
 ```
 
-The context is saved per conversation. It can be omitted on later messages to
-reuse the saved document; send `"active_document": null` to clear it. Sources in
-a previous answer do not automatically become the active document.
+Контекст сохраняется для каждого диалога. В следующих запросах его можно не
+передавать — будет использован сохранённый. Чтобы очистить договор, явно
+передайте `"active_document": null`. Документ из источников предыдущего ответа
+автоматически активным не становится.
 
-When wiring the core handler, also set `CORPUS_ID` and
-`INDEX_GENERATION_ID` in `.env`.
+## Интеграция с core и источники
 
-Message history is stored before the core is called. The core handler receives
-the question JSON described in `docs/ARCHITECTURE.md`, with up to the six
-preceding messages. It uses `CORPUS_ID` and `INDEX_GENERATION_ID` from `.env`.
-Each message request can include a `context` object with the active document
-and event date. The core handler returns the answer JSON plus internal
-`source_locations` (`answer_source_id`, document/version/clause IDs, canonical
-document text, `start_char`, and `end_char`). Only the answer JSON is returned
-to Streamlit.
+Для подключения core задайте в `.env` переменные `CORPUS_ID` и
+`INDEX_GENERATION_ID`. Перед вызовом core API сохраняет сообщение пользователя
+и передаёт вопрос в формате JSON из `docs/ARCHITECTURE.md`, включая до шести
+предыдущих сообщений.
 
-Streamlit opens a citation through
-`GET /api/v1/answers/{answer_id}/sources/{answer_source_id}`. The API checks
-answer ownership and returns source metadata with `before`, `highlight`, and
-`after`. The handler is not wired while `LegalPipeline.run()` remains a stub,
-so message requests return a structured 503 rather than inventing an answer.
+Core должен вернуть JSON ответа и внутренний список `source_locations`:
+идентификатор источника, UUID документа, версии и пункта, канонический текст
+документа и позиции выделенного фрагмента (`start_char`, `end_char`). Клиенту
+возвращается только JSON ответа.
+
+Чтобы открыть цитату, Streamlit вызывает
+`GET /api/v1/answers/{answer_id}/sources/{answer_source_id}`. API проверяет
+владельца ответа и возвращает данные источника с фрагментами `before`,
+`highlight` и `after`.
+
+**Важно:** обработчик core пока не подключён, а `LegalPipeline.run()` остаётся
+заглушкой. Поэтому отправка сообщения сейчас вернёт структурированную ошибку
+`503`; API не подменяет её выдуманным ответом.
