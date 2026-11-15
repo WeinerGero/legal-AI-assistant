@@ -35,5 +35,5 @@ def test_rrf_variants_are_deterministic_and_weighted(monkeypatch) -> None:
 
 def test_rrf_default_preserves_faiss_recall(monkeypatch) -> None:
     monkeypatch.delenv("RRF_MODE", raising=False)
-    assert _fuse_rankings([1, 2], [3, 4, 5], 3) == [3, 4, 5]
+    assert _fuse_rankings([[1, 2]], [[3, 4, 5]], 3) == [3, 4, 5]
 
