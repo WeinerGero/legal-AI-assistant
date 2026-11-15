@@ -77,3 +77,11 @@ Re-running `python -m submission.evaluate_golden --recalculate --run-id replay-9
 - compileall: passed
 - No Golden files, evaluation data or diagnostics added to the competition ZIP by this change.
 - No Codex score, DeepSeek judge, or fourth LLM used.
+
+## P02 follow-up run
+
+Run `replay-829d8c6-p02` completed H2, P1, R4, C2 and Fx1 (5/5). Calendar time: 637.077 s. The partition has no independent provision-level relevance file, so BM25/FAISS/RRF/Qwen3 Recall, Precision, MRR, nDCG and required-evidence metrics are `N/A` with the explicit reason `no independent provision-level relevance annotation for this partition`; this is not replaced by string matching or model self-report.
+
+Runtime facts: BGE-M3 dimension 1024; Qwen3 candidate pool 24 and output cutoff 8; API errors 0; Fx1 had a verifier/public-marker failure and one retry before fallback. Technical refusal rate is computed from completed outcomes, not inferred from Codex review. No change to P03 historical artifacts.
+
+The current P02 run is not a quality improvement claim because its retrieval labels are unavailable. It is retained for reproducibility and for diagnosing the remaining marker/verifier failure.
