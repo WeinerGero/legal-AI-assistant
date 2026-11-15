@@ -7,8 +7,10 @@ from submission.pipeline import (
     _fact_requirements,
     _normalize_verification,
     _render_verified_partial_answer,
+    _revision_scope,
     _validate_decimal_calculations,
     _validate_generation,
+    _validate_public_answer,
     _validate_verification,
 )
 
@@ -210,4 +212,49 @@ def test_decimal_calculation_rejects_an_incorrect_result() -> None:
         _validate_decimal_calculations({
             "calculations": [{"operation": "percent", "operands": ["2400000", "13"], "result": "1", "unit": "RUB"}]
         })
+
+
+@pytest.mark.parametrize(
+    ("operation", "operands", "result"),
+    [("min", ["150000", "100000"], "100000"), ("max", ["7", "12", "5"], "12")],
+)
+def test_decimal_calculation_supports_general_bounds(
+    operation: str, operands: list[str], result: str
+) -> None:
+    _validate_decimal_calculations({
+        "calculations": [{"operation": operation, "operands": operands, "result": result, "unit": "RUB"}]
+    })
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Обычный ответ [1].",
+        "Подтверждённая часть ответа. Не установлено: срок.",
+        "В удовлетворении запроса следует отказать.",
+        "Применяются пункты 3.1 и 3.4 двух документов.",
+        "Для редакции 2023 года вывод ограничен доступным текстом.",
+    ],
+)
+def test_public_answer_accepts_distinct_legal_outcomes(answer: str) -> None:
+    _validate_public_answer(answer)
+
+
+@pytest.mark.parametrize("marker", ["F001", "[E001]", "revision_required", "partially_supported"])
+def test_public_answer_rejects_internal_markers(marker: str) -> None:
+    with pytest.raises(ValueError, match="internal"):
+        _validate_public_answer(f"Ответ: {marker}")
+
+
+def test_revision_scope_revisits_dependent_claims_without_case_specific_rules() -> None:
+    scope = _revision_scope(
+        {
+            "claim_checks": [{"claim_id": "C002", "status": "contradicted"}],
+            "fact_checks": [{"fact_id": "F003", "status": "missing"}],
+        },
+        {"claims": [{"claim_id": "C001"}, {"claim_id": "C002"}]},
+    )
+    assert scope["defective_claim_ids"] == ["C002"]
+    assert scope["unanswered_fact_ids"] == ["F003"]
+    assert "calculation" in str(scope["instruction"])
 

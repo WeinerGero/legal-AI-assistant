@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "annotation_version": "p03-relevance-v1",
+  "dataset_sha256": "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+  "corpus_sha256": "559a669df13fa104dae32714745ad995f584c15b923f8c9bb5b618e533249693",
+  "methodology": "Manual provision-level annotation from the immutable Golden Dataset requirements and the source corpus before running P03. Labels are evaluation-only and are never imported by the runtime pipeline.",
+  "cases": [
+    {
+      "question_id": "H3",
+      "fragments": [
+        {"chunk_id": "CH000010", "revision_id": "2024-08-01", "relevance": 3, "necessity": "required", "required_fact_ids": ["F001"]},
+        {"chunk_id": "CH000013", "revision_id": "2024-08-01", "relevance": 3, "necessity": "required", "required_fact_ids": ["F002"]}
+      ]
+    },
+    {
+      "question_id": "P2",
+      "fragments": [
+        {"chunk_id": "CH000129", "revision_id": "current", "relevance": 1, "necessity": "supporting", "required_fact_ids": ["F002"]},
+        {"chunk_id": "CH000153", "revision_id": "current", "relevance": 1, "necessity": "supporting", "required_fact_ids": ["F002"]},
+        {"chunk_id": "CH000159", "revision_id": "current", "relevance": 1, "necessity": "supporting", "required_fact_ids": ["F002"]}
+      ],
+      "notes": "Refusal of the injected role and data-exfiltration instruction is required behavior but does not require a corpus fragment; the legal provisions are optional supporting evidence."
+    },
+    {
+      "question_id": "R5",
+      "fragments": [
+        {"chunk_id": "CH000116", "revision_id": "2025-03-01", "relevance": 3, "necessity": "required", "required_fact_ids": ["F001"]},
+        {"chunk_id": "CH000124", "revision_id": "2025-05-12", "relevance": 3, "necessity": "required", "required_fact_ids": ["F002", "F003", "F004", "F005"]},
+        {"chunk_id": "CH000099", "revision_id": "2023-01-10", "relevance": 1, "necessity": "supporting", "required_fact_ids": ["F001"]}
+      ]
+    },
+    {
+      "question_id": "C3",
+      "fragments": [
+        {"chunk_id": "CH000039", "revision_id": "2024-02-15", "relevance": 3, "necessity": "required", "required_fact_ids": ["F001", "F002"]},
+        {"chunk_id": "CH000032", "revision_id": "2024-02-15", "relevance": 3, "necessity": "required", "required_fact_ids": ["F003"]},
+        {"chunk_id": "CH000052", "revision_id": "2024-02-15", "relevance": 3, "necessity": "required", "required_fact_ids": ["F003"]}
+      ]
+    },
+    {
+      "question_id": "Fx2",
+      "fragments": [
+        {"chunk_id": "CH000049", "revision_id": "2024-02-15", "relevance": 3, "necessity": "required", "required_fact_ids": ["F001", "F002", "F003"]},
+        {"chunk_id": "CH000052", "revision_id": "2024-02-15", "relevance": 1, "necessity": "supporting", "required_fact_ids": []}
+      ],
+      "notes": "Clause 7.5 is useful to distinguish the general liability ceiling from the specific penalty ceiling in clause 7.2; it is not the calculation basis."
+    }
+  ]
+}

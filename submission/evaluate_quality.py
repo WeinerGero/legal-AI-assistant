@@ -255,10 +255,41 @@ def _label_ranking_metrics(
     idcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, len(labels) + 1))
     return {
         "recall": recall,
+        "precision": len(hit_ranks) / min(cutoff, len(ranking)) if ranking else 0.0,
         "mrr": mrr,
         "ndcg": dcg / idcg,
+        "hit_rate": float(bool(hit_ranks)),
         "cutoff": cutoff,
         "relevant_labels": len(labels),
+    }
+
+
+def labeled_ranking_metrics(
+    ranking: list[str], relevance: dict[str, int], cutoff: int
+) -> dict[str, float | int]:
+    """Canonical ID-based IR metrics used by offline partition evaluation."""
+    observed = ranking[:cutoff]
+    relevant = {identifier for identifier, grade in relevance.items() if grade > 0}
+    hits = [identifier for identifier in observed if identifier in relevant]
+    unique_hits = set(hits)
+    first_rank = next(
+        (rank for rank, identifier in enumerate(observed, 1) if identifier in relevant),
+        None,
+    )
+    gains = [float(relevance.get(identifier, 0)) for identifier in observed]
+    dcg = sum(gain / math.log2(rank + 1) for rank, gain in enumerate(gains, 1))
+    ideal = sorted((float(value) for value in relevance.values() if value > 0), reverse=True)[:cutoff]
+    idcg = sum(gain / math.log2(rank + 1) for rank, gain in enumerate(ideal, 1))
+    return {
+        "recall": len(unique_hits) / len(relevant) if relevant else 0.0,
+        "precision": len(hits) / len(observed) if observed else 0.0,
+        "mrr": 1.0 / first_rank if first_rank is not None else 0.0,
+        "ndcg": dcg / idcg if idcg else 0.0,
+        "hit_rate": float(bool(hits)),
+        "relevant_retrieved": len(unique_hits),
+        "relevant_total": len(relevant),
+        "returned": len(observed),
+        "cutoff": cutoff,
     }
 
 

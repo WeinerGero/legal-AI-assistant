@@ -359,8 +359,14 @@ class HybridIndex:
         fallback = False
         error: Exception | None = None
         try:
+            diagnostic_full = (
+                os.environ.get("RAG_RUNTIME_MODE", "").strip().upper() == "DEV_LOCAL"
+                and os.environ.get("RERANKER_DIAGNOSTIC_FULL", "").strip() == "1"
+            )
             reranked = self.client.rerank(
-                ranking_query, [self.fragments[i].text for i in candidates], final_k
+                ranking_query,
+                [self.fragments[i].text for i in candidates],
+                len(candidates) if diagnostic_full else final_k,
             )
             if not reranked:
                 raise ValueError("API переранжирования не вернул кандидатов")
@@ -371,6 +377,8 @@ class HybridIndex:
                     raise ValueError(f"некорректный индекс reranker: {index}")
                 seen.add(index)
                 selected.append((index, score))
+            diagnostic_selected = list(selected)
+            selected = selected[:final_k]
         except ReplayMismatchError:
             raise
         except Exception as exc:
@@ -381,6 +389,7 @@ class HybridIndex:
             fallback = True
             error = exc
             selected = [(i, None) for i in range(min(final_k, len(candidates)))]
+            diagnostic_selected = list(selected)
         result = [self.fragments[candidates[i]] for i, _score in selected]
         present_scores = [float(score) for _index, score in selected if isinstance(score, (int, float))]
         self._record_rag(
@@ -391,6 +400,10 @@ class HybridIndex:
             top_score=present_scores[0] if present_scores else None,
             ranked_document_ids=_ranked_doc_ids([[candidates[i] for i, _ in selected]], self.fragments),
             ranked_fragment_ids=_ranked_fragment_ids([[candidates[i] for i, _ in selected]], self.fragments),
+            diagnostic_ranked_fragment_ids=_ranked_fragment_ids(
+                [[candidates[i] for i, _ in diagnostic_selected]], self.fragments
+            ),
+            diagnostic_full_order=int(len(diagnostic_selected) > len(selected)),
         )
         self.client.recording.checkpoint(
             "rag.rerank",

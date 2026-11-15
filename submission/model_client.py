@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from time import perf_counter, sleep
 from typing import Any
 
 import httpx
+
+_RERANKER_GATE = threading.BoundedSemaphore(
+    max(1, int(os.getenv("RERANKER_MAX_CONCURRENCY", "1")))
+)
 
 try:
     from submission.budget import RuntimeBudget
@@ -302,19 +307,35 @@ class ModelClient:
     def rerank(self, query: str, documents: Sequence[str], top_n: int) -> list[tuple[int, float | None]]:
         if not self.reranker_model:
             raise RuntimeError("не задан RERANKER_MODEL")
-        data = self._request(
-            "rerank",
-            {
-                "model": self.reranker_model,
-                "query": query,
-                "documents": list(documents),
-                "top_n": min(top_n, len(documents)),
-            },
-            base_url=self.reranker_base_url,
-            api_key=self.reranker_api_key,
-            service="reranker",
-            stage="rerank",
-        )
+        queued_at = perf_counter()
+        with _RERANKER_GATE:
+            acquired_at = perf_counter()
+            data = self._request(
+                "rerank",
+                {
+                    "model": self.reranker_model,
+                    "query": query,
+                    "documents": list(documents),
+                    "top_n": min(top_n, len(documents)),
+                },
+                base_url=self.reranker_base_url,
+                api_key=self.reranker_api_key,
+                service="reranker",
+                stage="rerank",
+            )
+            finished_at = perf_counter()
+        if self.metrics is not None:
+            self.metrics.record(
+                "rag",
+                "reranker_client",
+                queue_wait_ms=round((acquired_at - queued_at) * 1000, 3),
+                processing_ms=round((finished_at - acquired_at) * 1000, 3),
+                candidates_count=len(documents),
+                input_characters=sum(len(item) for item in documents),
+                concurrency_limit=max(1, int(os.getenv("RERANKER_MAX_CONCURRENCY", "1"))),
+                server_queue_wait_ms=None,
+                server_queue_wait_status="N/A: llama-server does not expose per-request queue timing",
+            )
         rows = data.get("results", data.get("data", []))
         return [
             (int(row.get("index", row.get("document_index"))), row.get("relevance_score", row.get("score")))

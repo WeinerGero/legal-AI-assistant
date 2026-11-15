@@ -71,6 +71,8 @@ class SubmissionPipeline:
                 semantic_queries_count=len(analysis["semantic_queries"]),
                 ambiguous_count=len(analysis["unresolved_ambiguities"]),
                 query_diversity=len({str(v).casefold() for v in all_queries}) / len(all_queries),
+                fact_ids=[item["fact_id"] for item in fact_requirements],
+                fact_descriptions=[item["description"] for item in fact_requirements],
             )
             fragments = self.index.search_queries(
                 lexical, semantic, top_k=self.top_k, final_k=self.evidence_k
@@ -125,6 +127,7 @@ class SubmissionPipeline:
                         "mode": "revision",
                         "previous_generation": generation,
                         "verification": verification,
+                        "revision_scope": _revision_scope(verification, generation),
                     },
                     evidence,
                 )
@@ -172,6 +175,7 @@ class SubmissionPipeline:
                 self._record_duration(
                     "final_rendering", render_started, partial=int(partial is not None)
                 )
+            _validate_public_answer(result)
             total_claims = len(generation["claims"])
             self.last_outcome = {
                 "state": answer_state,
@@ -332,7 +336,7 @@ class SubmissionPipeline:
         _validate_verification(verification, generation, evidence, fact_requirements or [])
         checks = verification["claim_checks"]
         self._record_quality(
-            "verification", checked_claims_count=len(checks),
+            stage, checked_claims_count=len(checks),
             verification_coverage=len(checks) / len(generation["claims"]) if generation["claims"] else 1.0,
             self_reported_supported_rate=sum(c["status"] == "supported" for c in checks) / len(checks) if checks else 0.0,
             unsupported_claims_count=sum(c["status"] != "supported" for c in checks),
@@ -345,6 +349,13 @@ class SubmissionPipeline:
                 for check in verification.get("fact_checks", [])
             ) / len(fact_requirements) if fact_requirements else 1.0,
         )
+        if self.client.metrics is not None:
+            for check in verification.get("fact_checks", []):
+                self.client.metrics.record(
+                    "fact_flow", stage,
+                    fact_id=check.get("fact_id"), status=check.get("status"),
+                    claim_ids=check.get("claim_ids", []),
+                )
         return verification
 
     def _expanded_evidence_search(
@@ -899,6 +910,38 @@ def _evidence_trace_id(item: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def _revision_scope(verification: dict, generation: dict) -> dict[str, object]:
+    defective = {
+        str(check.get("claim_id"))
+        for check in verification.get("claim_checks", [])
+        if check.get("status") != "supported"
+    }
+    return {
+        "defective_claim_ids": sorted(defective),
+        "unanswered_fact_ids": sorted(
+            str(check.get("fact_id"))
+            for check in verification.get("fact_checks", [])
+            if check.get("status") != "addressed"
+        ),
+        "instruction": (
+            "Re-evaluate every conclusion, calculation, limit, date, revision, exception, "
+            "and remedy that depends on a defective premise; preserve only independently supported claims."
+        ),
+        "previous_claim_ids": [
+            str(claim.get("claim_id")) for claim in generation.get("claims", [])
+        ],
+    }
+
+
+def _validate_public_answer(answer: str) -> None:
+    if re.search(r"(?<![А-Яа-яA-Za-z0-9])F\d{3,}(?![А-Яа-яA-Za-z0-9])", answer, re.IGNORECASE):
+        raise ValueError("internal fact identifier leaked into public answer")
+    if re.search(r"\[?E\d{3,}\]?", answer, re.IGNORECASE):
+        raise ValueError("internal evidence identifier leaked into public answer")
+    if re.search(r"\b(?:revision_required|insufficient_evidence|partially_supported)\b", answer):
+        raise ValueError("internal workflow state leaked into public answer")
+
+
 def _validate_decimal_calculations(generation: dict) -> None:
     calculations = generation.get("calculations", [])
     if calculations is None:
@@ -906,7 +949,7 @@ def _validate_decimal_calculations(generation: dict) -> None:
     if not isinstance(calculations, list):
         raise ValueError("generation.calculations должен быть массивом")
     for row in calculations:
-        if not isinstance(row, dict) or row.get("operation") not in {"add", "subtract", "multiply", "divide", "percent"}:
+        if not isinstance(row, dict) or row.get("operation") not in {"add", "subtract", "multiply", "divide", "percent", "min", "max"}:
             raise ValueError("неподдерживаемая детерминированная операция")
         try:
             operands = [Decimal(str(value)) for value in row.get("operands", [])]
@@ -926,6 +969,10 @@ def _validate_decimal_calculations(generation: dict) -> None:
                 actual = operands[0] / operands[1]
             elif operation == "percent" and len(operands) == 2:
                 actual = operands[0] * operands[1] / Decimal("100")
+            elif operation == "min":
+                actual = min(operands)
+            elif operation == "max":
+                actual = max(operands)
             else:
                 raise InvalidOperation
         except (InvalidOperation, KeyError, ZeroDivisionError):

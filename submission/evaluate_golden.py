@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 from submission.model_client import _load_local_settings
+from submission.evaluate_quality import labeled_ranking_metrics
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "tests" / "golden" / "PSB_golden_dataset_v1.1_codex.json"
@@ -26,6 +27,8 @@ CORPUS = ROOT / "data" / "organizers" / "knowledge-base"
 REPORTS = ROOT
 PARTITIONS_PATH = ROOT / "tests" / "golden" / "golden_partitions.json"
 PARTITION_RUNS = ROOT / "artifacts" / "golden-runs"
+P03_RELEVANCE = ROOT / "tests" / "golden" / "p03_relevance_v1.json"
+INDEX_CHUNKS = ROOT / "submission" / "assets" / "bge_m3" / "chunks.json"
 BASELINE_COMMIT = "6f11e3ba3bfbc4ef6b3ab738f407b5c3aa1bbdfa"
 REQUIRED_FIELDS = (
     "id", "category", "title", "query", "expected_behavior", "gold_answer", "failure_conditions"
@@ -338,6 +341,8 @@ def _configure_dev_local() -> None:
         "RERANKER_BASE_URL": "http://127.0.0.1:8080/v1",
         "RERANKER_API_KEY": "local",
         "RERANKER_MODEL": models["Qwen3"],
+        "RERANKER_MAX_CONCURRENCY": "1",
+        "RERANKER_DIAGNOSTIC_FULL": "1",
         "INDEX_DIR": str(ROOT / "submission" / "assets" / "bge_m3"),
         "API_MODE": "live",
     })
@@ -502,20 +507,21 @@ def _write_architecture_metrics_at(
             "na_reason": reason,
         })
 
-    quality_labels = "N/A: independent entity, intent, fact, claim-error, and relevance labels are not present for this partition"
+    relevance = _load_relevance_labels({str(event.get("question_id")) for event in events})
+    quality_labels = "N/A: independent entity, intent, fact, and claim-error labels are not present for this partition"
     for metric in ("Intent Accuracy", "Entity Precision", "Entity Recall", "Entity F1", "Date Accuracy", "Version Accuracy", "Required Facts Extraction Precision", "Required Facts Extraction Recall", "Required Facts Extraction F1"):
         add("DeepSeek #1 analysis", metric, reason=quality_labels)
     analysis_events = [e for e in events if e.get("kind") == "quality" and e.get("stage") == "analysis"]
     add("query preparation", "query count", value=sum(int(e.get("lexical_queries_count", 0)) + int(e.get("semantic_queries_count", 0)) for e in analysis_events), observations=len(analysis_events))
     add("query preparation", "Query Coverage", reason="N/A: no independent fact-to-query mapping")
-    for element in ("BM25", "FAISS", "RRF", "Qwen3 reranker"):
-        for k in (5, 8, 10, 24):
-            for metric in ("Document Recall", "Section Recall", "Precision", "MRR", "nDCG", "Hit Rate"):
-                if element == "Qwen3 reranker" and k > 8:
-                    reason = "N/A: reranker returns only 8 fragments"
-                else:
-                    reason = "N/A: no independently annotated relevant document/section set"
-                add(element, metric, k=k, averaging="macro over annotated queries", reason=reason)
+    if relevance:
+        for row in _retrieval_metric_rows(events, relevance):
+            add(**row)
+    else:
+        for element in ("BM25", "FAISS", "RRF", "Qwen3 reranker"):
+            for k in (5, 8, 10, 24):
+                for metric in ("Document Recall", "Section Recall", "Fragment Recall", "Precision", "MRR", "nDCG", "Hit Rate", "Required Evidence Coverage"):
+                    add(element, metric, k=k, averaging="macro over annotated queries", reason="N/A: no independent provision-level relevance annotation for this partition")
     embedding_events = [e for e in events if e.get("kind") == "rag" and e.get("stage") == "embeddings"]
     if embedding_events:
         add("BGE-M3", "embedding dimension", value=embedding_events[0].get("embedding_dimension"), observations=len(embedding_events))
@@ -560,6 +566,151 @@ def _write_architecture_metrics_at(
         for event in events if event.get("question_id") is not None
     ]
     _atomic_csv(directory / "case_metrics.csv", case_fields, case_rows)
+
+
+def _load_relevance_labels(question_ids: set[str]) -> dict[str, dict[str, Any]]:
+    if not P03_RELEVANCE.is_file() or not INDEX_CHUNKS.is_file():
+        return {}
+    payload = json.loads(P03_RELEVANCE.read_text(encoding="utf-8"))
+    annotated = {str(row["question_id"]): row for row in payload.get("cases", [])}
+    selected = question_ids & set(annotated)
+    if not selected:
+        return {}
+    chunks_payload = json.loads(INDEX_CHUNKS.read_text(encoding="utf-8"))
+    chunks = chunks_payload.get("chunks", []) if isinstance(chunks_payload, dict) else chunks_payload
+    by_id = {str(row["chunk_id"]): row for row in chunks}
+    trace_catalog: dict[str, dict[str, str]] = {}
+    for chunk in chunks:
+        trace_payload = "\u241f".join(
+            str(chunk.get(name) or "") for name in ("document", "section", "text")
+        )
+        trace = hashlib.sha256(trace_payload.encode("utf-8")).hexdigest()[:16]
+        document_id = hashlib.sha256(chunk["document"].encode("utf-8")).hexdigest()[:16]
+        trace_catalog[trace] = {
+            "document_id": document_id,
+            "section_id": f'{document_id}#{str(chunk.get("section") or "")}',
+        }
+    result: dict[str, dict[str, Any]] = {}
+    for question_id in selected:
+        labels = annotated[question_id].get("fragments", [])
+        missing = [row["chunk_id"] for row in labels if row["chunk_id"] not in by_id]
+        if missing:
+            raise ValueError(f"unresolved relevance chunks for {question_id}: {missing}")
+        fragment_rows = []
+        for label in labels:
+            chunk = by_id[label["chunk_id"]]
+            trace_payload = "\u241f".join(
+                str(chunk.get(name) or "") for name in ("document", "section", "text")
+            )
+            fragment_rows.append({
+                **label,
+                "trace_id": hashlib.sha256(trace_payload.encode("utf-8")).hexdigest()[:16],
+                "document": chunk["document"],
+                "document_id": hashlib.sha256(chunk["document"].encode("utf-8")).hexdigest()[:16],
+                "section": str(chunk.get("section") or ""),
+            })
+        result[question_id] = {"fragments": fragment_rows, "trace_catalog": trace_catalog}
+    return result
+
+
+def _retrieval_metric_rows(
+    events: list[dict[str, Any]], relevance: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    first_events: dict[tuple[str, str], dict[str, Any]] = {}
+    for event in events:
+        question_id = str(event.get("question_id"))
+        stage = str(event.get("stage"))
+        if event.get("kind") == "rag" and question_id in relevance:
+            first_events.setdefault((question_id, stage), event)
+    rows: list[dict[str, Any]] = []
+    stage_names = {
+        "BM25": ("bm25", False),
+        "FAISS": ("faiss", False),
+        "RRF": ("fusion", False),
+        "Qwen3 reranker": ("rerank", False),
+        "Qwen3 diagnostic full order": ("rerank", True),
+    }
+    for element, (stage, diagnostic) in stage_names.items():
+        cutoffs = (5, 8, 10, 24) if element != "Qwen3 reranker" else (5, 8)
+        for cutoff in cutoffs:
+            per_dimension: dict[str, list[dict[str, float | int]]] = defaultdict(list)
+            required_retrieved = required_total = 0
+            for question_id, annotation in relevance.items():
+                event = first_events.get((question_id, stage))
+                if event is None:
+                    continue
+                key = "diagnostic_ranked_fragment_ids" if diagnostic else "ranked_fragment_ids"
+                trace_ranking = list(event.get(key, []))
+                if diagnostic and not event.get("diagnostic_full_order"):
+                    continue
+                fragment_lookup = {row["trace_id"]: row for row in annotation["fragments"]}
+                trace_catalog = annotation["trace_catalog"]
+                trace_to_grade = {trace: int(row["relevance"]) for trace, row in fragment_lookup.items()}
+                document_relevance = {row["document_id"]: max(int(row["relevance"]), 1) for row in annotation["fragments"]}
+                section_relevance = {f'{row["document_id"]}#{row["section"]}': max(int(row["relevance"]), 1) for row in annotation["fragments"]}
+                doc_ranking = list(event.get("ranked_document_ids", []))
+                section_ranking = []
+                for trace in trace_ranking:
+                    value = trace_catalog.get(trace, {}).get("section_id")
+                    if value and value not in section_ranking:
+                        section_ranking.append(value)
+                per_dimension["Document"].append(labeled_ranking_metrics(doc_ranking, document_relevance, cutoff))
+                per_dimension["Section"].append(labeled_ranking_metrics(section_ranking, section_relevance, cutoff))
+                per_dimension["Fragment"].append(labeled_ranking_metrics(trace_ranking, trace_to_grade, cutoff))
+                required = {row["trace_id"] for row in annotation["fragments"] if row.get("necessity") == "required"}
+                required_retrieved += len(required & set(trace_ranking[:cutoff]))
+                required_total += len(required)
+            for dimension, metrics in per_dimension.items():
+                if not metrics:
+                    continue
+                for metric_key, label in (("recall", "Recall"), ("precision", "Precision"), ("mrr", "MRR"), ("ndcg", "nDCG"), ("hit_rate", "Hit Rate")):
+                    rows.append({
+                        "element": element,
+                        "metric": f"{dimension} {label}",
+                        "k": cutoff,
+                        "value": mean(float(item[metric_key]) for item in metrics),
+                        "numerator": sum(float(item[metric_key]) for item in metrics),
+                        "denominator": len(metrics),
+                        "averaging": "case macro",
+                        "source": "P03 independent provision-level relevance annotation v1",
+                        "observations": len(metrics),
+                    })
+            if required_total:
+                rows.append({
+                    "element": element, "metric": "Required Evidence Coverage", "k": cutoff,
+                    "value": required_retrieved / required_total,
+                    "numerator": required_retrieved, "denominator": required_total,
+                    "averaging": "micro", "source": "P03 independent provision-level relevance annotation v1",
+                    "observations": len(relevance),
+                })
+    rows.extend(_selection_loss_rows(events, relevance, first_events))
+    return rows
+
+
+def _selection_loss_rows(
+    events: list[dict[str, Any]],
+    relevance: dict[str, dict[str, Any]],
+    first_events: dict[tuple[str, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    selected = {
+        str(event.get("question_id")): set(event.get("fragment_ids", []))
+        for event in events
+        if event.get("kind") == "pipeline" and event.get("stage") == "evidence_selection"
+    }
+    present = lost = 0
+    for question_id, annotation in relevance.items():
+        rerank = first_events.get((question_id, "rerank"), {})
+        ranked = set(rerank.get("ranked_fragment_ids", []))
+        required = {row["trace_id"] for row in annotation["fragments"] if row.get("necessity") == "required"}
+        available = required & ranked
+        present += len(available)
+        lost += len(available - selected.get(question_id, set()))
+    return [{
+        "element": "evidence selection", "metric": "Evidence Selection Loss",
+        "value": lost / present if present else 0.0, "numerator": lost, "denominator": present,
+        "averaging": "micro", "source": "P03 independent provision-level relevance annotation v1",
+        "observations": len(relevance),
+    }]
 
 
 def _percentile(values: list[float], fraction: float) -> float | str:
