@@ -5,7 +5,7 @@ import hmac
 import os
 import secrets
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -28,13 +28,8 @@ from backend.database import (
     engine,
     get_db,
 )
-from core.contracts import (
-    AnalysisRequestV1,
-    ChatMessage,
-    DialogContext,
-    RenderedAnswerV1,
-    TechnicalFailure,
-)
+from backend.schemas import AnswerResponse, ModelQuestion, QuestionContext, RecentMessage
+from core.contracts import TechnicalFailure
 
 SESSION_TTL = timedelta(hours=12)
 PASSWORD_ITERATIONS = 310_000
@@ -98,14 +93,8 @@ class MessageOutput(BaseModel):
     id: UUID
     role: Literal["user", "assistant"]
     content: str
-    answer: RenderedAnswerV1 | None
+    answer: AnswerResponse | None
     created_at: datetime
-
-
-class SendMessageOutput(BaseModel):
-    user_message: MessageOutput
-    assistant_message: MessageOutput
-    answer: RenderedAnswerV1
 
 
 def _hash_password(password: str) -> str:
@@ -217,7 +206,7 @@ def _message_json(message: Message) -> dict[str, Any]:
     }
 
 
-def _answer_text(answer: RenderedAnswerV1) -> str:
+def _answer_text(answer: AnswerResponse) -> str:
     return "\n\n".join(
         segment.text for block in answer.blocks for segment in block.segments
     )
@@ -365,7 +354,7 @@ def list_messages(
 @app.post(
     "/api/v1/conversations/{conversation_id}/messages",
     status_code=status.HTTP_201_CREATED,
-    response_model=SendMessageOutput,
+    response_model=AnswerResponse,
     responses={
         status.HTTP_502_BAD_GATEWAY: {"model": TechnicalFailure},
         status.HTTP_503_SERVICE_UNAVAILABLE: {"model": TechnicalFailure},
@@ -385,14 +374,6 @@ def send_message(
         .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(6)
     ).all()
-    analysis_request = AnalysisRequestV1(
-        current_message=payload.content,
-        dialog_context=DialogContext.model_validate(conversation.context_json),
-        recent_messages=[
-            ChatMessage(role=item.role, content=item.content) for item in reversed(recent)
-        ],
-        current_date=date.today(),
-    )
 
     user_message = Message(
         conversation_id=conversation_id,
@@ -406,8 +387,52 @@ def send_message(
     db.commit()
     db.refresh(user_message)
 
+    core_handler = request.app.state.core_handler
+    if core_handler is None:
+        failure = TechnicalFailure(
+            error_code="model_unavailable",
+            message="The core answer pipeline is not configured.",
+            request_id=f"req-{uuid4()}",
+        )
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=failure.model_dump(mode="json"),
+        )
+
+    corpus_id = os.getenv("CORPUS_ID", "").strip()
+    index_generation_id = os.getenv("INDEX_GENERATION_ID", "").strip()
+    if not corpus_id or not index_generation_id:
+        failure = TechnicalFailure(
+            error_code="internal_error",
+            message="CORPUS_ID and INDEX_GENERATION_ID must be configured.",
+            request_id=f"req-{uuid4()}",
+        )
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=failure.model_dump(mode="json"),
+        )
+
+    context_data = conversation.context_json or {}
+    context = QuestionContext(
+        active_document=context_data.get("active_document"),
+        event_date=context_data.get("event_date"),
+    )
+    model_request = ModelQuestion(
+        schema_version="1.0",
+        request_id=f"req-{uuid4()}",
+        question=payload.content,
+        context=context,
+        recent_messages=[
+            RecentMessage(role=item.role, content=item.content) for item in reversed(recent)
+        ],
+        summary=context_data.get("summary"),
+        corpus_id=corpus_id,
+        index_generation_id=index_generation_id,
+        context_revision=context_data.get("context_revision", 1),
+    )
+
     try:
-        answer = answer_question(analysis_request, request.app.state.core_handler)
+        answer = answer_question(model_request, core_handler)
     except CoreUnavailable as exc:
         failure = TechnicalFailure(
             error_code="model_unavailable", message=str(exc), request_id=str(uuid4())
@@ -427,8 +452,6 @@ def send_message(
             content=failure.model_dump(mode="json"),
         )
 
-    answer_id = uuid4()
-    answer = answer.model_copy(update={"answer_id": str(answer_id)})
     answer_json = answer.model_dump(mode="json")
     assistant_message = Message(
         conversation_id=conversation_id,
@@ -440,7 +463,7 @@ def send_message(
     db.flush()
     db.add(
         Answer(
-            id=answer_id,
+            id=uuid4(),
             user_id=user.id,
             conversation_id=conversation_id,
             message_id=assistant_message.id,
@@ -449,21 +472,20 @@ def send_message(
     )
     db.commit()
     db.refresh(assistant_message)
-    return {
-        "user_message": _message_json(user_message),
-        "assistant_message": _message_json(assistant_message),
-        "answer": answer_json,
-    }
+    return answer_json
 
 
-@app.get("/api/v1/answers/{answer_id}", response_model=RenderedAnswerV1)
+@app.get("/api/v1/answers/{answer_id}", response_model=AnswerResponse)
 def get_answer(
-    answer_id: UUID,
+    answer_id: str,
     user: User = Depends(_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     answer = db.scalar(
-        select(Answer).where(Answer.id == answer_id, Answer.user_id == user.id)
+        select(Answer).where(
+            Answer.user_id == user.id,
+            Answer.answer_json["answer_id"].as_string() == answer_id,
+        )
     )
     if answer is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Answer not found.")

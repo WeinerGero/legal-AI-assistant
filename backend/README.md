@@ -19,8 +19,12 @@ send the returned bearer token in the `Authorization` header.
 Main routes are `/api/v1/auth/*`, `/api/v1/conversations`, and
 `/api/v1/conversations/{id}/messages`.
 
+When wiring the core handler, also set `CORPUS_ID` and
+`INDEX_GENERATION_ID` in `.env`.
+
 Message history is stored before the core is called. The core handler receives
-an `AnalysisRequestV1` JSON payload with up to the six preceding messages and
-must return a `RenderedAnswerV1` JSON value. The handler is not wired while
-`LegalPipeline.run()` remains a stub, so message requests return a structured
-503 rather than inventing an answer.
+the question JSON described in `docs/ARCHITECTURE.md`, with up to the six
+preceding messages. It uses `CORPUS_ID` and `INDEX_GENERATION_ID` from `.env`.
+The handler must return the answer JSON with citations and sources. The handler
+is not wired while `LegalPipeline.run()` remains a stub, so message requests
+return a structured 503 rather than inventing an answer.
