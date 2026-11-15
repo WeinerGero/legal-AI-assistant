@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Юридический ассистент</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%2338078a%22/%3E%3Cpath d=%22M9 16h12M17 10l6 6-6 6%22 stroke=%22%23ff922b%22 stroke-width=%223%22 fill=%22none%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Экран входа -->
+  <div class="auth" id="authScreen" hidden>
+    <section class="auth-promo">
+      <div class="brand">ПСБ</div>
+      <div class="auth-promo-body">
+        <h1>Юридический ассистент</h1>
+        <ul>
+          <li>Ответы по договорам, внутренним документам и нормам из базы знаний</li>
+          <li>Ссылка на конкретный пункт для каждого вывода</li>
+          <li>Документ-источник с подсвеченным фрагментом — в один клик</li>
+        </ul>
+      </div>
+    </section>
+    <section class="auth-main">
+      <form class="auth-card" id="authForm" novalidate>
+        <h2>Вход</h2>
+        <p class="auth-sub">Войдите, чтобы продолжить работу с ассистентом</p>
+        <label class="field">
+          <span>Логин</span>
+          <input id="authLogin" name="login" type="text" autocomplete="username" placeholder="Корпоративный логин или e-mail" required>
+        </label>
+        <label class="field">
+          <span>Пароль</span>
+          <span class="pw-wrap">
+            <input id="authPassword" name="password" type="password" autocomplete="current-password" placeholder="Пароль" required>
+            <button type="button" class="pw-toggle" id="togglePassword" aria-pressed="false">Показать</button>
+          </span>
+        </label>
+        <label class="check"><input type="checkbox" id="authRemember"> Запомнить меня на этом устройстве</label>
+        <div class="auth-error" id="authError" role="alert" hidden></div>
+        <button class="btn-primary" id="authSubmit" type="submit" disabled>Войти</button>
+        <div class="auth-hint" id="authHint" hidden></div>
+        <p class="auth-foot">Нет доступа? Обратитесь к администратору системы.</p>
+      </form>
+    </section>
+  </div>
+
+  <!-- Основной экран -->
+  <div class="app" id="app" hidden>
+    <aside class="sidebar" aria-label="Диалоги">
+      <div class="brand">ПСБ</div>
+      <button class="btn-new" id="btnNew" type="button">+ Новый диалог</button>
+
+      <div class="search-row">
+        <label class="search">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <input id="chatSearch" type="search" placeholder="Поиск по чатам" aria-label="Поиск по чатам">
+        </label>
+        <button class="btn-filter" id="btnFilter" type="button" aria-expanded="false" aria-controls="filterPanel" title="Фильтры">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span class="filter-count" id="filterCount" hidden>0</span>
+        </button>
+      </div>
+      <div class="filter-panel" id="filterPanel" hidden>
+        <div class="filter-label">Период</div>
+        <div class="chips" id="periodChips"></div>
+        <div class="filter-label">Документы в ответах</div>
+        <div class="chips" id="docChips"></div>
+        <div class="filter-label">Другое</div>
+        <div class="chips"><button type="button" class="chip" id="favChip">★ Только избранные</button></div>
+        <button type="button" class="link-light" id="btnResetFilters">Сбросить фильтры</button>
+      </div>
+
+      <div class="sidebar-title" id="listTitle">Недавние диалоги</div>
+      <nav class="dialogs" id="dialogList"></nav>
+
+      <div class="user">
+        <div class="avatar" id="userAvatar"></div>
+        <div class="user-info">
+          <div class="user-name" id="userName"></div>
+          <div class="user-role" id="userRole"></div>
+        </div>
+        <button class="btn-logout" id="btnLogout" type="button" title="Выйти">Выйти</button>
+      </div>
+    </aside>
+
+    <main class="chat">
+      <header class="chat-header">
+        <h1>Юридический ассистент</h1>
+        <span class="mode-badge" id="modeBadge" hidden>Демо-режим: бэкенд не подключён</span>
+      </header>
+      <section class="messages" id="messages" aria-live="polite"></section>
+      <form class="composer" id="composer" autocomplete="off">
+        <textarea id="input" rows="1" placeholder="Задайте вопрос по документам базы знаний ..." aria-label="Вопрос"></textarea>
+        <button class="btn-send" id="btnSend" type="submit" aria-label="Отправить">
+          <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M4 12h15M13 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+    </main>
+
+    <aside class="sources" aria-label="Источники ответа">
+      <div class="sources-list-view" id="sourcesListView">
+        <h2>Источники ответа</h2>
+        <div id="sourcesList"></div>
+      </div>
+      <div class="doc-view" id="docView" hidden>
+        <div class="doc-head">
+          <button class="btn-back" id="btnBack" type="button">← Источники</button>
+          <div class="doc-title" id="docTitle"></div>
+          <div class="doc-meta" id="docMeta"></div>
+        </div>
+        <div class="doc-body" id="docBody"></div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="config.js"></script>
+  <script src="mock-data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -377,12 +377,20 @@ def send_message(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     conversation = _owned_conversation(db, user.id, conversation_id)
-    recent = db.scalars(
+    recent = list(db.scalars(
         select(Message)
         .where(Message.conversation_id == conversation_id)
         .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(6)
-    ).all()
+    ).all())
+    # Повтор последнего вопроса после сбоя не дублирует его в истории.
+    retrying_previous_message = bool(
+        recent
+        and recent[0].role == "user"
+        and recent[0].content == payload.content
+    )
+    if retrying_previous_message:
+        recent = recent[1:]
     context_data = conversation.context_json or {}
     previous_context = {
         "active_document": context_data.get("active_document"),
@@ -402,17 +410,17 @@ def send_message(
     }
     model_context = QuestionContext.model_validate(new_context)
 
-    user_message = Message(
-        conversation_id=conversation_id,
-        role="user",
-        content=payload.content,
-    )
-    db.add(user_message)
-    if conversation.title == "Новый диалог":
-        conversation.title = payload.content.strip()[:80] or "Новый диалог"
-    conversation.updated_at = datetime.now(timezone.utc)
+    if not retrying_previous_message:
+        user_message = Message(
+            conversation_id=conversation_id,
+            role="user",
+            content=payload.content,
+        )
+        db.add(user_message)
+        if conversation.title == "Новый диалог":
+            conversation.title = payload.content.strip()[:80] or "Новый диалог"
+        conversation.updated_at = datetime.now(timezone.utc)
     db.commit()
-    db.refresh(user_message)
 
     core_handler = request.app.state.core_handler
     if core_handler is None:
