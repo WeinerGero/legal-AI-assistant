@@ -8,6 +8,17 @@
   embedded index, and embedded prompts only.
 - Golden data, tests, reports, logs, `.env`, secrets, development helpers, and
   raw corpus files are absent.
+- Independent `golden_judge.py` is excluded by the builder allowlist.
+
+## Official-material comparison
+
+- Technical regulation SHA-256: `11BF7862477D1B9A23C69F852A7FF74690E35E7DE4CAE80BFE043B5B8B491406`.
+- Organizer sample ZIP SHA-256: `99227787858DD5106B1902D5C44AE2399F37EFB63BEAE20683FE467F898D640F`.
+- Runtime accepts the documented `LLM_*` variables and `BASE_URL` / `OPENAI_*`
+  alternatives, uses the same proxy and fallback key for generation,
+  embeddings, and reranking, and does not invoke `pip install`.
+- The archive is flat like the organizer sample. Omitting README is permitted
+  by the sample instructions.
 
 ## Clean-directory execution
 

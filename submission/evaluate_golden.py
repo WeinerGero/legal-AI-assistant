@@ -72,7 +72,9 @@ def _load_cases() -> list[dict[str, Any]]:
 
 
 def _availability_reason() -> str | None:
-    missing = [name for name in ("LLM_BASE_URL", "LLM_API_KEY") if not os.environ.get(name)]
+    has_url = any(os.environ.get(name) for name in ("LLM_BASE_URL", "BASE_URL", "OPENAI_BASE_URL"))
+    has_key = any(os.environ.get(name) for name in ("LLM_API_KEY", "OPENAI_API_KEY"))
+    missing = [name for name, present in (("LLM_BASE_URL/BASE_URL/OPENAI_BASE_URL", has_url), ("LLM_API_KEY/OPENAI_API_KEY", has_key)) if not present]
     if missing:
         return "real run unavailable: process environment is missing " + ", ".join(missing)
     if not CORPUS.is_dir():

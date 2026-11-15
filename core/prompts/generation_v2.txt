@@ -30,6 +30,7 @@ COMPLETENESS
 - Address every independently requested fact.
 - Give the substantive answer first, followed by necessary qualifications.
 - Avoid unnecessary repetition.
+- Prefer no more than 150 words unless the requested legal analysis requires more detail.
 - If only part of the question is supported, answer that part and clearly identify what remains unknown.
 - If the evidence is insufficient, explain the limitation in target_language without guessing.
 - Do not replace missing evidence with a generic legal opinion.
