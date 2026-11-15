@@ -163,6 +163,7 @@ def _ensure_run_metadata(run_root: Path, manifest: dict[str, Any]) -> None:
 def _write_partition_files(partition_dir: Path, events: list[dict[str, Any]], state: dict[str, Any]) -> None:
     _write_event_csv_at(partition_dir / "timings.csv", events, lambda event: isinstance(event.get("duration_ms"), (int, float)))
     _write_event_csv_at(partition_dir / "llm_metrics.csv", events, lambda event: event.get("kind") in {"llm", "api"})
+    _write_stage_metrics_at(partition_dir / "stage_metrics.csv", events)
     errors = [event for event in events if event.get("error_count") or event.get("error_type")]
     _atomic_json(partition_dir / "errors.json", errors)
     _atomic_text(
@@ -190,7 +191,22 @@ def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, A
         "case_count": 65,
         "run_dir": str(run_root),
     }
+    state["codex_evaluations"] = _read_codex_evaluations(manifest, run_root)
     _write_outputs(cases, rows, events, state)
+
+
+def _read_codex_evaluations(manifest: dict[str, Any], run_root: Path) -> dict[str, Any]:
+    cases: dict[str, Any] = {}
+    partitions: list[dict[str, Any]] = []
+    for part in manifest["partitions"]:
+        path = run_root / "partitions" / part["partition_id"] / "codex_evaluation.json"
+        payload = _read_json(path, {})
+        if not payload:
+            continue
+        partitions.append(payload)
+        for result in payload.get("cases", []):
+            cases[str(result["case_id"])] = result
+    return {"cases": cases, "partitions": partitions}
 
 
 def _print_partition_status(manifest: dict[str, Any], run_root: Path) -> None:
@@ -212,7 +228,7 @@ def _read_answer_rows(path: Path) -> dict[str, dict[str, str]]:
 
 
 def _read_json(path: Path, default: Any) -> Any:
-    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else default
+    return json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else default
 
 
 def _atomic_text(path: Path, value: str) -> None:
@@ -342,7 +358,7 @@ def _write_outputs(cases: list[dict[str, Any]], rows: list[dict[str, Any]], even
         for event in events if event.get("kind") == "outcome" and event.get("stage") == "question"
     }
     with (REPORTS / "GOLDEN_CASE_RESULTS.csv").open("w", encoding="utf-8-sig", newline="") as handle:
-        fields = [*REQUIRED_FIELDS, "answer", "pipeline_state", "judge_score", "error"]
+        fields = [*REQUIRED_FIELDS, "answer", "pipeline_state", "codex_score", "error"]
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for case in cases:
@@ -351,27 +367,33 @@ def _write_outputs(cases: list[dict[str, Any]], rows: list[dict[str, Any]], even
                 **{name: _cell(case[name]) for name in REQUIRED_FIELDS},
                 "answer": answers.get(str(case["id"]), "N/A"),
                 "pipeline_state": event.get("final_state", "N/A"),
-                "judge_score": "N/A",
+                "codex_score": state.get("codex_evaluations", {}).get("cases", {}).get(str(case["id"]), {}).get("overall_score", "N/A"),
                 "error": event.get("error_type") or state.get("reason") or "",
             })
     _write_event_csv("RAG_TIMINGS.csv", events, lambda e: isinstance(e.get("duration_ms"), (int, float)))
     _write_event_csv("RAG_LLM_METRICS.csv", events, lambda e: e.get("kind") in {"llm", "api"})
     _write_stage_metrics(events)
     completed = len(rows)
+    evaluations = state.get("codex_evaluations", {}).get("partitions", [])
+    evaluated = sum(int(item.get("case_count", 0)) for item in evaluations)
+    scores = [float(case["overall_score"]) for item in evaluations for case in item.get("cases", [])]
+    codex_score = f"{mean(scores):.4f}" if scores else "N/A"
     reason = state.get("reason") or "none"
     (REPORTS / "GOLDEN_EVALUATION_REPORT.md").write_text(
         "# Golden evaluation report\n\n"
         f"- Golden cases: 65\n- Full real pipeline completed: {completed}/65\n"
-        f"- DeepSeek judge completed: 0/65\n- Status: {'executed' if completed else 'blocked'}\n"
+        f"- Codex evaluation completed: {evaluated}/65\n- Codex mean score: {codex_score}\n"
+        f"- Status: {'in progress' if completed < 65 else 'complete'}\n"
         f"- Reason: {reason}\n- Commit: `{state['commit']}`\n"
         f"- Golden SHA-256: `{state['golden_sha256']}`\n- Corpus SHA-256: `{state['corpus_sha256']}`\n\n"
-        "All unavailable quality measures are N/A, not zero. No claim about organizer-judge parity is made.\n",
+        "The Codex score is an internal diagnostic assessment, not the organizer score. "
+        "All unavailable quality measures are N/A, not zero.\n",
         encoding="utf-8",
     )
     (REPORTS / "GOLDEN_FAILURE_ANALYSIS.md").write_text(
         "# Golden failure analysis\n\n"
-        f"The 65-case real run was not executed: {reason}. Therefore case-level root causes, "
-        "judge failures, retrieval regressions, and before/after quality deltas are N/A.\n\n"
+        f"The partitioned real run is in progress: {completed}/65 cases executed and {evaluated}/65 evaluated by Codex. "
+        f"Current limitation: {reason}. Unfinished cases remain N/A.\n\n"
         "Verified code regressions cover citation-marker alignment, contradictory verification pass, "
         "bounded timeout retry, and exact fallback character ranges.\n",
         encoding="utf-8",
@@ -380,9 +402,11 @@ def _write_outputs(cases: list[dict[str, Any]], rows: list[dict[str, Any]], even
         "# Baseline versus current\n\n"
         f"Baseline commit: `{BASELINE_COMMIT}`. Current commit: `{state['commit']}`.\n\n"
         "| Metric | Baseline | Current | Delta |\n|---|---:|---:|---:|\n"
-        "| Full live cases | N/A | N/A | N/A |\n| DeepSeek judge score | N/A | N/A | N/A |\n"
-        "| Required Fact Recall | N/A | N/A | N/A |\n| Technical Refusal Rate | N/A | N/A | N/A |\n\n"
-        f"Matched live comparison is unavailable: {reason}.\n",
+        f"| Full live cases | N/A | {completed}/65 | N/A |\n"
+        f"| Codex score | N/A | {codex_score} | N/A |\n"
+        "| Required Fact Recall | N/A | See partition evaluations | N/A |\n"
+        "| Technical Refusal Rate | N/A | See partition evaluations | N/A |\n\n"
+        "Only identical case IDs may be compared; unavailable historical values remain N/A.\n",
         encoding="utf-8",
     )
 
@@ -398,23 +422,38 @@ def _write_event_csv(name: str, events: list[dict[str, Any]], predicate) -> None
 
 
 def _write_stage_metrics(events: list[dict[str, Any]]) -> None:
+    _write_stage_metrics_at(REPORTS / "RAG_STAGE_METRICS.csv", events)
+
+
+def _write_stage_metrics_at(path: Path, events: list[dict[str, Any]]) -> None:
     grouped: dict[str, list[float]] = defaultdict(list)
     for event in events:
         duration = event.get("duration_ms")
-        if isinstance(duration, (int, float)):
-            grouped[f"{event.get('kind')}.{event.get('stage')}"] .append(float(duration))
-    with (REPORTS / "RAG_STAGE_METRICS.csv").open("w", encoding="utf-8-sig", newline="") as handle:
+        if isinstance(duration, (int, float)) and event.get("kind") != "api":
+            stage = "question_total" if event.get("kind") == "outcome" and event.get("stage") == "question" else str(event.get("stage"))
+            grouped[stage].append(float(duration))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
         fields = ["stage", "definition", "count", "total_ms", "mean_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms", "errors", "retries"]
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for name in STAGE_NAMES:
             values = grouped.get(name, [])
+            relevant = [
+                event for event in events
+                if event.get("kind") != "api" and (
+                    event.get("stage") == name
+                    or (name == "question_total" and event.get("kind") == "outcome" and event.get("stage") == "question")
+                )
+            ]
             writer.writerow({
                 "stage": name, "definition": "measured pipeline stage duration",
                 "count": len(values) if values else "N/A", "total_ms": sum(values) if values else "N/A",
                 "mean_ms": mean(values) if values else "N/A", "p50_ms": _percentile(values, .5),
                 "p95_ms": _percentile(values, .95), "p99_ms": _percentile(values, .99),
-                "max_ms": max(values) if values else "N/A", "errors": "N/A", "retries": "N/A",
+                "max_ms": max(values) if values else "N/A",
+                "errors": sum(int(event.get("error_count", 0) or bool(event.get("error_type"))) for event in relevant),
+                "retries": sum(int(event.get("retry_count", event.get("retries", 0)) or 0) for event in relevant),
             })
 
 

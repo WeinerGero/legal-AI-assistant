@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "rules": {
+    "ratios": "Aggregate raw numerators and denominators; never average partition percentages.",
+    "ranking": "Macro-average per annotated query. Unannotated queries are N/A.",
+    "timing": "Aggregate raw completed-call durations. Percentiles use the combined observations.",
+    "not_applicable": "Use N/A when independent labels or a non-zero denominator are unavailable."
+  },
+  "metrics": [
+    {
+      "name": "Codex score",
+      "formula": "weighted sum of six criterion scores",
+      "required_labels": "gold answer, expected behavior, failure conditions, corpus evidence",
+      "unit": "score 0..1",
+      "numerator": "sum of weighted applicable criterion scores",
+      "denominator": "sum of applicable criterion weights",
+      "averaging": "macro over evaluated cases",
+      "na_rule": "N/A when a criterion cannot be independently verified",
+      "stage": "final answer",
+      "direction": "higher"
+    },
+    {
+      "name": "Required Fact Recall",
+      "formula": "confirmed required facts / independently labelled required facts",
+      "required_labels": "atomic required facts",
+      "unit": "ratio",
+      "numerator": "confirmed required facts",
+      "denominator": "required facts",
+      "averaging": "micro and case macro",
+      "na_rule": "N/A without independently verified facts",
+      "stage": "analysis, evidence, generation, final answer",
+      "direction": "higher"
+    },
+    {
+      "name": "Claim Support Rate",
+      "formula": "supported published claims / reviewed published claims",
+      "required_labels": "claim-level corpus support",
+      "unit": "ratio",
+      "numerator": "supported claims",
+      "denominator": "reviewed claims",
+      "averaging": "micro and case macro",
+      "na_rule": "N/A with no reviewed claims",
+      "stage": "generation and final answer",
+      "direction": "higher"
+    },
+    {
+      "name": "Citation Coverage",
+      "formula": "answers with required grounded citations / substantive answers requiring citations",
+      "required_labels": "citation requirement and corpus grounding",
+      "unit": "ratio",
+      "numerator": "covered answers",
+      "denominator": "answers requiring citations",
+      "averaging": "micro",
+      "na_rule": "N/A when citations are not applicable",
+      "stage": "final answer",
+      "direction": "higher"
+    },
+    {
+      "name": "Technical Refusal Rate",
+      "formula": "technical refusals / completed cases",
+      "required_labels": "terminal outcome",
+      "unit": "ratio",
+      "numerator": "technical refusals",
+      "denominator": "completed cases",
+      "averaging": "micro",
+      "na_rule": "N/A with no completed cases",
+      "stage": "final answer",
+      "direction": "lower"
+    },
+    {
+      "name": "False Refusal Rate",
+      "formula": "incorrect refusals / answerable cases",
+      "required_labels": "expected outcome and corpus answerability",
+      "unit": "ratio",
+      "numerator": "false refusals",
+      "denominator": "answerable cases",
+      "averaging": "micro",
+      "na_rule": "N/A with no independently confirmed answerable cases",
+      "stage": "final answer",
+      "direction": "lower"
+    },
+    {
+      "name": "Precision Recall F1",
+      "formula": "sklearn.metrics precision_score, recall_score, f1_score when scikit-learn is installed; otherwise N/A",
+      "required_labels": "independent binary or multiclass labels",
+      "unit": "ratio",
+      "numerator": "library-defined true-positive counts",
+      "denominator": "library-defined predicted or actual positives",
+      "averaging": "micro and macro as reported",
+      "na_rule": "N/A without labels or compatible installed library",
+      "stage": "analysis and verification",
+      "direction": "higher"
+    },
+    {
+      "name": "Recall@K",
+      "formula": "relevant items in top K / independently labelled relevant items",
+      "required_labels": "relevant documents or sections",
+      "unit": "ratio",
+      "numerator": "relevant retrieved items",
+      "denominator": "relevant labelled items",
+      "averaging": "macro over annotated queries",
+      "na_rule": "N/A for unannotated queries",
+      "stage": "BM25, FAISS, RRF, reranker",
+      "direction": "higher"
+    },
+    {
+      "name": "Precision@K",
+      "formula": "relevant items in top K / returned items up to K",
+      "required_labels": "relevant documents or sections",
+      "unit": "ratio",
+      "numerator": "relevant retrieved items",
+      "denominator": "returned items up to K",
+      "averaging": "macro over annotated queries",
+      "na_rule": "N/A for unannotated or empty-return queries",
+      "stage": "BM25, FAISS, RRF, reranker",
+      "direction": "higher"
+    },
+    {
+      "name": "MRR@K",
+      "formula": "reciprocal rank of first relevant item at or before K",
+      "required_labels": "relevant documents or sections",
+      "unit": "ratio",
+      "numerator": "1",
+      "denominator": "rank of first relevant item",
+      "averaging": "macro over annotated queries",
+      "na_rule": "N/A for unannotated queries; zero when annotated and no hit",
+      "stage": "BM25, FAISS, RRF, reranker",
+      "direction": "higher"
+    },
+    {
+      "name": "nDCG@K",
+      "formula": "existing submission.evaluate_quality implementation; sklearn.metrics.ndcg_score only for compatible dense labels",
+      "required_labels": "graded or binary relevance",
+      "unit": "ratio",
+      "numerator": "discounted cumulative gain",
+      "denominator": "ideal discounted cumulative gain",
+      "averaging": "macro over annotated queries",
+      "na_rule": "N/A without relevance labels",
+      "stage": "BM25, FAISS, RRF, reranker",
+      "direction": "higher"
+    },
+    {
+      "name": "Evidence Selection Loss",
+      "formula": "relevant retrieved evidence omitted from selected evidence / relevant retrieved evidence",
+      "required_labels": "relevant evidence before and after selection",
+      "unit": "ratio",
+      "numerator": "lost relevant evidence",
+      "denominator": "retrieved relevant evidence",
+      "averaging": "micro and query macro",
+      "na_rule": "N/A without evidence relevance labels",
+      "stage": "evidence selection",
+      "direction": "lower"
+    },
+    {
+      "name": "Recovery Success Rate",
+      "formula": "revisions passing repeated validation / revision attempts",
+      "required_labels": "pre-revision and post-revision validation",
+      "unit": "ratio",
+      "numerator": "successful recoveries",
+      "denominator": "revision attempts",
+      "averaging": "micro",
+      "na_rule": "N/A when no revision was attempted",
+      "stage": "revision",
+      "direction": "higher"
+    },
+    {
+      "name": "Stage duration",
+      "formula": "statistics.mean and sorted-observation percentile selection",
+      "required_labels": "monotonic measured duration",
+      "unit": "milliseconds",
+      "numerator": "sum of durations",
+      "denominator": "completed measured calls",
+      "averaging": "count, total, mean, p50, p95, p99, max over raw observations",
+      "na_rule": "N/A when the stage was not executed",
+      "stage": "every measured pipeline stage",
+      "direction": "lower"
+    }
+  ]
+}
