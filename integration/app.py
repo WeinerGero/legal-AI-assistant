@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -31,6 +32,11 @@ def create_app(config: IntegrationConfig | None = None) -> FastAPI:
 
     if not any(getattr(route, "path", None) == "/integration/readyz" for route in app.routes):
         @app.get("/integration/readyz")
-        def integration_ready() -> dict[str, bool]:
-            return {"rag_ready": bool(getattr(app.state, "rag_ready", False))}
+        def integration_ready() -> dict[str, bool | str]:
+            return {
+                "rag_ready": bool(getattr(app.state, "rag_ready", False)),
+                "corpus_id": os.environ.get("CORPUS_ID", ""),
+                "index_generation_id": os.environ.get("INDEX_GENERATION_ID", ""),
+                "llm_model": os.environ.get("LLM_MODEL", ""),
+            }
     return app

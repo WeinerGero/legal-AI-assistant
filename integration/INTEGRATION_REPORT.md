@@ -56,6 +56,31 @@ were not read by the agent. Reporting model-answer quality or per-stage live tim
 an authenticated call would be misleading. The tracked organizer corpus is now packaged
 directly by the integration image and does not require a host mount.
 
+The runtime now receives `LLM_DEV` from Compose, fixes `LLM_MODEL` to
+`deepseek-v4.1-flash`, and derives `CORPUS_ID` and `INDEX_GENERATION_ID` from the actual
+corpus hashes and bundled manifest rather than operator-supplied labels.
+
+## Runtime configuration verification
+
+The corrected stack was rebuilt and started on 2026-11-15. `docker compose config
+--quiet` passed using the root `.env` without printing it. `/integration/readyz` returned
+`rag_ready=true`, the explicit `deepseek-v4.1-flash` model, a corpus identifier derived
+from the 21 archived document hashes, and an index-generation identifier derived from the
+manifest SHA-256.
+
+A real authenticated backend request asked for the payment term under supply contract
+P-17-2024. It completed in 71.673 seconds with HTTP 201, `legal_status=partial`,
+`verification_status=partial`, and three persisted sources. All three source routes opened
+with non-empty exact highlights. The verified partial answer did not retain a supported
+claim that directly stated the requested payment term; this is a quality/retrieval gap,
+not a configuration failure.
+
+The first live attempt failed because the local Qwen3-4B server disconnected on a batch
+of 30 long fragments. A short rerank request from the same container returned HTTP 200.
+Interactive configuration was therefore bounded to 12 rerank candidates and six final
+evidence fragments; the real request then completed without disabling Qwen3 or using an
+Ollama/additional-model fallback.
+
 ## Merge simulation against current dev
 
 `origin/dev` was `b0fe048eb436d9ec5a8e9a6544ca73aaa0c0591c`. `git merge-tree --write-tree`
