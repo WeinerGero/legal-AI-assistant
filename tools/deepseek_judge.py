@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -40,20 +41,44 @@ def judge_run(run_root: Path, cases: list[dict[str, Any]]) -> None:
         with path.open(encoding="utf-8-sig", newline="") as handle:
             answers.update({row["id"]: row.get("answer", "") for row in csv.DictReader(handle)})
     out = run_root / "judge_cases.jsonl"
+    existing = {}
+    if out.is_file():
+        for line in out.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line)
+            if row.get("case_id") and not row.get("error"):
+                existing[str(row["case_id"])] = row
     summary = {"evaluated": 0, "errors": 0, "model": model, "rounds": 1}
-    with httpx.Client(timeout=120.0) as client, out.open("w", encoding="utf-8") as handle:
+    results: dict[str, dict[str, Any]] = dict(existing)
+    with httpx.Client(timeout=120.0) as client:
         for case in cases:
             case_id = str(case["id"])
-            payload = {"case_id": case_id, "question": case["query"], "expected_behavior": case["expected_behavior"], "gold_answer": case["gold_answer"], "failure_conditions": case["failure_conditions"], "answer": answers.get(case_id, "")}
-            try:
-                response = client.post(f"{base}/chat/completions", headers={"Authorization": f"Bearer {key}"}, json={"model": model, "temperature": 0.0, "max_tokens": 1200, "messages": [{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]})
-                response.raise_for_status()
-                content = response.json()["choices"][0]["message"]["content"]
-                result = json.loads(content) if isinstance(content, str) else content
-                result["case_id"] = case_id
+            if case_id in results:
                 summary["evaluated"] += 1
-            except Exception as exc:
-                result = {"case_id": case_id, "error": type(exc).__name__}
+                continue
+            payload = {"case_id": case_id, "question": case["query"], "expected_behavior": case["expected_behavior"], "gold_answer": case["gold_answer"], "failure_conditions": case["failure_conditions"], "answer": answers.get(case_id, "")}
+            result = {"case_id": case_id, "error": "HTTPStatusError"}
+            for attempt in range(3):
+                try:
+                    response = client.post(f"{base}/chat/completions", headers={"Authorization": f"Bearer {key}"}, json={"model": model, "temperature": 0.0, "max_tokens": 1200, "messages": [{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]})
+                    response.raise_for_status()
+                    content = response.json()["choices"][0]["message"]["content"]
+                    result = json.loads(content) if isinstance(content, str) else content
+                    result["case_id"] = case_id
+                    result["attempts"] = attempt + 1
+                    break
+                except Exception as exc:
+                    result = {"case_id": case_id, "error": type(exc).__name__, "attempts": attempt + 1}
+                    if attempt < 2:
+                        time.sleep(1 + attempt)
+            results[case_id] = result
+            if result.get("error"):
                 summary["errors"] += 1
-            handle.write(json.dumps(result, ensure_ascii=False) + "\n")
+            else:
+                summary["evaluated"] += 1
+    out.write_text("".join(json.dumps(results[str(case["id"])], ensure_ascii=False) + "\n" for case in cases), encoding="utf-8")
+    for part in run_root.glob("partitions/P??"):
+        ids = {row["id"] for row in csv.DictReader((part / "answers.csv").open(encoding="utf-8-sig", newline=""))}
+        partition_results = [results[case_id] for case_id in ids if case_id in results]
+        (part / "judge_cases.jsonl").write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in partition_results), encoding="utf-8")
+        (part / "judge_summary.json").write_text(json.dumps({"evaluated": sum(not row.get("error") for row in partition_results), "errors": sum(bool(row.get("error")) for row in partition_results), "model": model}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (run_root / "judge_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
