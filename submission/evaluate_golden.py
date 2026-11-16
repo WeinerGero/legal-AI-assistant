@@ -233,7 +233,7 @@ def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, A
 def _write_quality_metrics_at(directory: Path, events: list[dict[str, Any]]) -> dict[str, Any]:
     question_ids = {str(e.get("question_id")) for e in events if e.get("kind") == "outcome" and e.get("stage") == "question"}
     required = {"bm25", "faiss", "fusion", "rerank", "evidence_selection"}
-    seen = {(str(e.get("question_id")), str(e.get("stage"))) for e in events if e.get("kind") == "rag"}
+    seen = {(str(e.get("question_id")), str(e.get("stage"))) for e in events}
     missing = [f"{question}:{stage}" for question in sorted(question_ids) for stage in sorted(required) if (question, stage) not in seen]
     metric_path = directory / "architecture_metrics.csv"
     rows = list(csv.DictReader(metric_path.open(encoding="utf-8", newline=""))) if metric_path.is_file() else []
