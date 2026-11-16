@@ -85,3 +85,11 @@ Run `replay-829d8c6-p02` completed H2, P1, R4, C2 and Fx1 (5/5). Calendar time: 
 Runtime facts: BGE-M3 dimension 1024; Qwen3 candidate pool 24 and output cutoff 8; API errors 0; Fx1 had a verifier/public-marker failure and one retry before fallback. Technical refusal rate is computed from completed outcomes, not inferred from Codex review. No change to P03 historical artifacts.
 
 The current P02 run is not a quality improvement claim because its retrieval labels are unavailable. It is retained for reproducibility and for diagnosing the remaining marker/verifier failure.
+
+## P01 quality-gated replay
+
+Run `replay-quality-p01-3afab07` completed H1, D7, R3, C1 and Calc3 (5/5). Calendar time: 521.751 s; technical refusal rate: `0/5 = 0%`; follow-up trigger trace: `1/5 = 20%`. BGE-M3 dimension was 1024 and the local Qwen3 reranker used 24 candidates with an 8-result output. API errors and retries were zero.
+
+P01 has no independent provision-level relevance annotation, so document/section/fragment ranking and legal-semantic metrics are `N/A` with explicit reasons in `quality_metrics.json`. The new quality gate nevertheless produced `quality_metrics.json` and `quality_metrics.md` and marked the run `complete` because all required runtime traces were present. `--strict-quality` fails only when a required trace is actually missing.
+
+The replay was recalculated from saved events without model calls. Historical P01 artifacts were not overwritten. The run is not a claim that 5/5 answers are legally correct.
