@@ -29,6 +29,8 @@ services:
     environment:
       EMBEDDER_BASE_URL: http://bge-m3/v1
       RERANKER_BASE_URL: http://qwen3-reranker:8080/v1
+      EMB_MODEL: BAAI/bge-m3
+      RERANKER_MODEL: qwen/qwen3-reranker-4b
       RAG_TOP_K: "30"
       RAG_EVIDENCE_K: "10"
     depends_on:

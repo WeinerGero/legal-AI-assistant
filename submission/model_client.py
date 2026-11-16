@@ -103,7 +103,7 @@ class ModelClient:
             or ("deepseek-v4.1-flash" if local_key else "deepseek/deepseek-v4.1-flash")
         )
         self.embedding_model = get("EMB_MODEL", "baai/bge-m3")
-        self.reranker_model = get("RERANKER_MODEL", "qwen/qwen3-reranker-8b")
+        self.reranker_model = get("RERANKER_MODEL", "qwen/qwen3-reranker-4b")
         self.timeout = timeout
         self.seed = seed
         self.max_tokens = max_tokens

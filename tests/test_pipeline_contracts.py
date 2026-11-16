@@ -8,6 +8,8 @@ from submission.pipeline import (
     _align_generation_citations,
     _fact_requirements,
     _normalize_verification,
+    _normalize_presentation_blocks,
+    _render_presentation_blocks,
     _render_verified_partial_answer,
     _revision_scope,
     _select_evidence_records,
@@ -16,6 +18,34 @@ from submission.pipeline import (
     _validate_public_answer,
     _validate_verification,
 )
+
+
+def test_presentation_blocks_keep_supported_claims_and_render_connected_text() -> None:
+    generation = {
+        "claims": [
+            {"claim_id": "C001", "text": "Оплата составляет 100 рублей.", "evidence_ids": ["E001"]},
+            {"claim_id": "C002", "text": "Срок оплаты — пять дней.", "evidence_ids": ["E002"]},
+        ]
+    }
+    verification = {
+        "claim_checks": [
+            {"claim_id": "C001", "status": "supported"},
+            {"claim_id": "C002", "status": "supported"},
+        ],
+        "presentation_blocks": [{"block_type": "conclusion", "segments": [{
+            "text": "Оплата составляет 100 рублей, её нужно внести в течение пяти дней.",
+            "claim_ids": ["C001", "C002"], "evidence_ids": ["E001", "E002"],
+        }]}],
+    }
+    evidence = [
+        {"evidence_id": "E001", "document": "contract", "section": "1"},
+        {"evidence_id": "E002", "document": "contract", "section": "2"},
+    ]
+    _normalize_presentation_blocks(verification, generation, evidence)
+    assert _render_presentation_blocks(verification, generation, evidence, target_language="ru") == (
+        "Оплата составляет 100 рублей, её нужно внести в течение пяти дней. [1] [2]\n\n"
+        "Источники:\n[1] contract — 1\n[2] contract — 2"
+    )
 
 
 def test_follow_up_question_is_safe_and_single():
