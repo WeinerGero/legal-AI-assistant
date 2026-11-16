@@ -20,5 +20,7 @@ server {
     }
 
     location = /config.js { add_header Cache-Control "no-store"; }
+    location = /app.js { add_header Cache-Control "no-store"; }
+    location = /index.html { add_header Cache-Control "no-store"; }
     location / { try_files $uri $uri/ /index.html; }
 }

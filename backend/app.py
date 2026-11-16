@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -305,14 +305,6 @@ def _answer_text(answer: AnswerResponse) -> str:
     )
 
 
-def _history_intent(question: str) -> bool:
-    normalized = re.sub(r"[^\w]+", " ", question.casefold()).strip()
-    return any(re.search(pattern, normalized) for pattern in (
-        r"\bчто\s+я\s+спросил", r"\bкакой\s+(?:был\s+)?мой\s+первый\s+вопрос",
-        r"\bчто\s+ты\s+ответил", r"\bповтори\s+мой\s+(?:первый\s+)?вопрос",
-    ))
-
-
 def _conversation_result(value: str, audit_pass: str) -> CoreResult:
     return CoreResult.model_validate({
         "answer": {
@@ -331,28 +323,26 @@ def _conversation_result(value: str, audit_pass: str) -> CoreResult:
     })
 
 
-def _smalltalk_result(question: str) -> CoreResult | None:
-    normalized = re.sub(r"[^\w]+", " ", question.casefold()).strip()
-    greetings = {"привет", "здравствуй", "здравствуйте", "добрый день", "доброе утро", "добрый вечер", "hi", "hello"}
-    if normalized in greetings:
-        return _conversation_result("Здравствуйте! Чем могу помочь?", "conversation_smalltalk")
-    if normalized in {"спасибо", "благодарю", "спасибо большое"}:
-        return _conversation_result("Пожалуйста!", "conversation_smalltalk")
-    return None
-
-
-def _history_result(question: str, messages: list[Message]) -> CoreResult | None:
-    if not _history_intent(question):
-        return None
-    normalized = re.sub(r"[^\w]+", " ", question.casefold()).strip()
-    users = [item.content for item in messages if item.role == "user" and not _history_intent(item.content)]
+def _history_result(target: str, messages: list[Message]) -> CoreResult:
+    users = []
+    for index, item in enumerate(messages):
+        if item.role != "user":
+            continue
+        next_item = messages[index + 1] if index + 1 < len(messages) else None
+        audit = {}
+        if next_item is not None and next_item.role == "assistant":
+            audit = (getattr(next_item, "answer_json", None) or {}).get("retrieval_audit", {})
+        if audit.get("performed") is not False:
+            users.append(item.content)
     assistants = [item.content for item in messages if item.role == "assistant"]
-    if re.search(r"\bчто\s+ты\s+ответил", normalized):
+    if target == "last_assistant":
         value = assistants[-1] if assistants else "Ранее я ещё не отвечал в этом диалоге."
-    elif "первый" in normalized:
+    elif target == "first_user":
         value = users[0] if users else "В этом диалоге ещё нет предыдущих вопросов."
-    else:
+    elif target == "last_user":
         value = users[-1] if users else "В этом диалоге ещё нет предыдущих вопросов."
+    else:
+        raise ValueError("unknown conversation history target")
     return _conversation_result(value, "conversation_history")
 
 
@@ -712,9 +702,8 @@ def send_message(
         conversation.updated_at = datetime.now(timezone.utc)
     db.commit()
 
-    conversation_result = _smalltalk_result(payload.content) or _history_result(payload.content, list(reversed(recent)))
     core_handler = request.app.state.core_handler
-    if core_handler is None and conversation_result is None:
+    if core_handler is None:
         failure = TechnicalFailure(
             error_code="model_unavailable",
             message="The core answer pipeline is not configured.",
@@ -727,6 +716,16 @@ def send_message(
 
     corpus_id = os.getenv("CORPUS_ID", "").strip()
     index_generation_id = os.getenv("INDEX_GENERATION_ID", "").strip()
+    route_started = monotonic()
+    route_fn = getattr(core_handler, "route_question", None)
+    route = route_fn(payload.content) if callable(route_fn) else None
+    if route is not None and route.route == "conversation":
+        if route.action == "history":
+            conversation_result = _history_result(route.history_target, list(reversed(recent)))
+        else:
+            conversation_result = _conversation_result(route.reply, "conversation_reply")
+    else:
+        conversation_result = None
     if (not corpus_id or not index_generation_id) and conversation_result is None:
         failure = TechnicalFailure(
             error_code="internal_error",
@@ -738,6 +737,7 @@ def send_message(
             content=failure.model_dump(mode="json"),
         )
 
+    request_budget = getattr(getattr(core_handler, "config", None), "request_timeout_seconds", 330.0)
     model_request = ModelQuestion(
         schema_version="1.0",
         request_id=f"req-{uuid4()}",
@@ -750,6 +750,8 @@ def send_message(
         corpus_id=corpus_id,
         index_generation_id=index_generation_id,
         context_revision=context_revision,
+        answer_style=route.answer_style if route is not None else "standard",
+        remaining_budget_seconds=max(0.001, request_budget - (monotonic() - route_started)),
     )
 
     try:
