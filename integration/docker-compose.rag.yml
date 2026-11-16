@@ -10,6 +10,7 @@ services:
       RAG_CORPUS_PATH: /app/data/knowledge-base.zip
       RAG_INDEX_DIR: /app/submission/assets/bge_m3
       RAG_MODEL_TIMEOUT_SECONDS: "300"
+      RAG_REQUEST_TIMEOUT_SECONDS: "330"
       RAG_MAX_CONCURRENCY: "1"
       RAG_QUEUE_CAPACITY: "4"
       RAG_TOP_K: "12"

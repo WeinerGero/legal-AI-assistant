@@ -10,10 +10,17 @@ class IntegrationConfig:
     corpus_path: Path
     index_dir: Path
     model_timeout_seconds: float = 300.0
+    request_timeout_seconds: float = 330.0
     max_concurrency: int = 1
     queue_capacity: int = 4
     top_k: int = 30
     evidence_k: int = 10
+
+    def __post_init__(self) -> None:
+        if self.model_timeout_seconds <= 0:
+            raise ValueError("RAG_MODEL_TIMEOUT_SECONDS must be positive")
+        if not 0 < self.request_timeout_seconds < 360:
+            raise ValueError("RAG_REQUEST_TIMEOUT_SECONDS must be between 0 and 360")
 
     @classmethod
     def from_env(cls) -> "IntegrationConfig":
@@ -21,6 +28,7 @@ class IntegrationConfig:
             corpus_path=Path(os.environ.get("RAG_CORPUS_PATH", "/data/knowledge-base.zip")),
             index_dir=Path(os.environ.get("RAG_INDEX_DIR", "/app/submission/assets/bge_m3")),
             model_timeout_seconds=float(os.environ.get("RAG_MODEL_TIMEOUT_SECONDS", "300")),
+            request_timeout_seconds=float(os.environ.get("RAG_REQUEST_TIMEOUT_SECONDS", "330")),
             max_concurrency=max(1, int(os.environ.get("RAG_MAX_CONCURRENCY", "1"))),
             queue_capacity=max(1, int(os.environ.get("RAG_QUEUE_CAPACITY", "4"))),
             top_k=max(1, int(os.environ.get("RAG_TOP_K", "30"))),

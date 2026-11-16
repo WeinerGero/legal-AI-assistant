@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import threading
+from copy import deepcopy
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -14,6 +15,7 @@ import httpx
 from backend.schemas import CoreResult, ModelQuestion
 from integration.config import IntegrationConfig
 from submission.model_client import ModelClient
+from submission.budget import RuntimeBudget
 from submission.pipeline import SubmissionPipeline
 from submission.search import Fragment, HybridIndex, RequiredLocalServiceError, _read_archive_documents
 
@@ -82,21 +84,34 @@ class RagHandler:
             )
             messages.append({"role": "user", "content": f"Контекст: {context_note}\n\n{request.question}"})
             try:
-                with self._model_lock:
+                budget = RuntimeBudget.start(self.config.request_timeout_seconds)
+                acquired = self._model_lock.acquire(timeout=budget.remaining())
+                if not acquired:
+                    raise TimeoutError("RAG request expired while waiting for the model queue")
+                try:
                     self.client.reset_question_trace()
-                    self.pipeline.run(json.dumps({"messages": messages}, ensure_ascii=False))
+                    previous_budget = self.client.budget
+                    self.client.budget = budget
+                    try:
+                        self.pipeline.run(json.dumps({"messages": messages}, ensure_ascii=False))
+                        artifacts = deepcopy(self.pipeline.last_artifacts)
+                        result = self._to_core_result(request, artifacts)
+                    finally:
+                        self.client.budget = previous_budget
+                finally:
+                    self._model_lock.release()
             except RequiredLocalServiceError as exc:
                 LOGGER.exception("rag_model_failure service=local_model error_type=%s", type(exc).__name__)
                 raise ModelDependencyError("local_model", "request failed") from exc
-            except (httpx.HTTPError, httpx.TimeoutException, ValueError) as exc:
+            except (httpx.HTTPError, TimeoutError, ValueError) as exc:
                 LOGGER.exception("rag_model_failure service=model error_type=%s", type(exc).__name__)
                 raise ModelDependencyError("model", "invalid or unavailable response") from exc
-            result = self._to_core_result(request)
             LOGGER.info(
-                "rag_request_complete request_id=%s duration_ms=%.3f sources=%d trace=%s",
+                "rag_request_complete request_id=%s duration_ms=%.3f sources=%d stages=%s trace=%s",
                 request.request_id,
                 (perf_counter() - started) * 1000,
                 len(result.source_locations),
+                json.dumps(artifacts.get("stage_timings_ms", {}), sort_keys=True),
                 json.dumps(self.client.question_trace(), sort_keys=True),
             )
             return result
@@ -161,12 +176,12 @@ class RagHandler:
         result["ready"] = all(bool(item.get("ready")) for item in result.values())
         return result
 
-    def _to_core_result(self, request: ModelQuestion) -> CoreResult:
-        artifacts = self.pipeline.last_artifacts
+    def _to_core_result(self, request: ModelQuestion, artifacts: dict[str, Any]) -> CoreResult:
         generation = artifacts.get("generation")
         verification = artifacts.get("verification")
         evidence = artifacts.get("evidence")
         fragments = artifacts.get("fragments")
+        evidence_fragments = artifacts.get("evidence_fragments")
         if not all(isinstance(value, (dict, list)) for value in (generation, verification, evidence, fragments)):
             raise ValueError("RAG did not expose a structured verified result")
         generation = generation if isinstance(generation, dict) else {}
@@ -187,7 +202,12 @@ class RagHandler:
             for evidence_id in claim.get("evidence_ids", []):
                 if evidence_id not in used_ids:
                     used_ids.append(evidence_id)
-        by_id = {item.get("evidence_id"): (item, fragment) for item, fragment in zip(evidence, fragments)}
+        if not isinstance(evidence_fragments, dict):
+            raise ValueError("RAG did not expose stable evidence-to-fragment mapping")
+        by_id = {
+            item.get("evidence_id"): (item, evidence_fragments.get(str(item.get("evidence_id"))))
+            for item in evidence
+        }
         sources: list[dict[str, Any]] = []
         locations: list[dict[str, Any]] = []
         source_ids: dict[str, str] = {}

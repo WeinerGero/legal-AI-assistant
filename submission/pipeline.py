@@ -37,9 +37,13 @@ class SubmissionPipeline:
         self.generation_prompt = _load_prompt("generation_v2.txt")
         self.verification_prompt = _load_prompt("verification_v2.txt")
         self.last_outcome: dict[str, object] = {}
+        self.last_artifacts: dict[str, object] = {}
+        self._stage_timings: dict[str, float] = {}
 
     def run(self, question: str) -> str:
         started = perf_counter()
+        self.last_artifacts = {}
+        self._stage_timings = {}
         try:
             stage_started = perf_counter()
             messages = parse_conversation(question)
@@ -52,6 +56,7 @@ class SubmissionPipeline:
                 )
             )
             _validate_analysis(analysis)
+            self._record_duration("analysis", stage_started)
             fact_requirements = _fact_requirements(analysis["requested_facts"])
             stage_started = perf_counter()
             standalone = analysis["standalone_question"].strip()
@@ -78,6 +83,7 @@ class SubmissionPipeline:
                 lexical, semantic, top_k=self.top_k, final_k=max(self.evidence_k, self.top_k)
             )
             fragments = _select_evidence_fragments(fragments, fact_requirements, self.evidence_k)
+            fragment_registry = {_fragment_trace_id(item): item for item in fragments}
             stage_started = perf_counter()
             evidence = [
                 {
@@ -119,8 +125,11 @@ class SubmissionPipeline:
             )
             if revision_allowed:
                 if verification.get("unanswered_facts") or generation.get("answer_type") == "insufficient_evidence":
-                    evidence = self._expanded_evidence_search(
+                    evidence, expanded_fragments = self._expanded_evidence_search(
                         standalone, verification, evidence, fact_requirements
+                    )
+                    fragment_registry.update(
+                        {_fragment_trace_id(item): item for item in expanded_fragments}
                     )
                     evidence = _select_evidence_records(evidence, fact_requirements, self.evidence_k)
                     generation_request["evidence"] = evidence
@@ -193,6 +202,22 @@ class SubmissionPipeline:
                 "retained_claims_rate": retained_claims / total_claims if total_claims else 0.0,
                 "verification": verification["verdict"],
             }
+            evidence_fragments = {
+                str(item["evidence_id"]): fragment_registry[_evidence_trace_id(item)]
+                for item in evidence
+                if _evidence_trace_id(item) in fragment_registry
+            }
+            self.last_artifacts = {
+                "analysis": analysis,
+                "generation": generation,
+                "verification": verification,
+                "evidence": evidence,
+                "fragments": list(evidence_fragments.values()),
+                "evidence_fragments": evidence_fragments,
+                "rendered_text": result,
+                "stage_timings_ms": dict(self._stage_timings),
+                "outcome": dict(self.last_outcome),
+            }
             self._record_quality(
                 "question", revised=int(revised), verified_pass=int(verification["verdict"] == "pass"),
                 answer_length=len(result), retained_claims=retained_claims,
@@ -203,6 +228,7 @@ class SubmissionPipeline:
             self._record_question(started, generation, verification, technical_failure=False)
             return result
         except Exception as exc:
+            self.last_artifacts = {}
             self.last_outcome = {
                 "state": "technical_refusal",
                 "retained_claims": 0,
@@ -214,6 +240,8 @@ class SubmissionPipeline:
 
 
     def recovery_answer(self, question: str) -> str:
+        self.last_artifacts = {}
+        self._stage_timings = {}
         if self.client.budget is not None:
             self.client.budget.require(
                 "verified recovery",
@@ -297,6 +325,23 @@ class SubmissionPipeline:
             "verification": verification["verdict"],
             "recovery_used": True,
         }
+        fragment_registry = {_fragment_trace_id(item): item for item in fragments}
+        evidence_fragments = {
+            str(item["evidence_id"]): fragment_registry[_evidence_trace_id(item)]
+            for item in evidence
+            if _evidence_trace_id(item) in fragment_registry
+        }
+        self.last_artifacts = {
+            "analysis": analysis,
+            "generation": generation,
+            "verification": verification,
+            "evidence": evidence,
+            "fragments": list(evidence_fragments.values()),
+            "evidence_fragments": evidence_fragments,
+            "rendered_text": result,
+            "stage_timings_ms": dict(self._stage_timings),
+            "outcome": dict(self.last_outcome),
+        }
         return result
 
     def _generate(self, request: dict, evidence: list[dict]) -> dict:
@@ -304,6 +349,7 @@ class SubmissionPipeline:
             "revision": "generation_revision",
             "recovery": "generation_recovery",
         }.get(request.get("mode"), "generation")
+        started = perf_counter()
         generation = self._json(
             self.client.complete_json(
                 self.generation_prompt,
@@ -315,6 +361,7 @@ class SubmissionPipeline:
         _align_generation_citations(generation)
         _validate_generation(generation, evidence)
         _validate_decimal_calculations(generation)
+        self._record_duration(stage, started)
         self._record_duration("structure_validation", validation_started)
         claims = generation["claims"]
         references = [item for claim in claims for item in claim["evidence_ids"]]
@@ -339,6 +386,7 @@ class SubmissionPipeline:
         fact_requirements: list[dict] | None = None,
         stage: str = "verification",
     ) -> dict:
+        started = perf_counter()
         verification = self._json(
             self.client.complete_json(
                 self.verification_prompt,
@@ -359,6 +407,7 @@ class SubmissionPipeline:
         )
         _normalize_verification(verification, generation, fact_requirements or [])
         _validate_verification(verification, generation, evidence, fact_requirements or [])
+        self._record_duration(stage, started)
         checks = verification["claim_checks"]
         self._record_quality(
             stage, checked_claims_count=len(checks),
@@ -389,7 +438,7 @@ class SubmissionPipeline:
         verification: dict,
         evidence: list[dict],
         fact_requirements: list[dict],
-    ) -> list[dict]:
+    ) -> tuple[list[dict], list[object]]:
         started = perf_counter()
         missing = [str(item).strip() for item in verification.get("unanswered_facts", []) if str(item).strip()]
         requirement_by_id = {item["fact_id"]: item["description"] for item in fact_requirements}
@@ -399,7 +448,7 @@ class SubmissionPipeline:
                 if description and description not in missing:
                     missing.append(description)
         if not missing:
-            return evidence
+            return evidence, []
         fragments = self.index.search_queries(
             [standalone, *missing], missing, top_k=self.top_k, final_k=max(self.evidence_k, self.top_k)
         )
@@ -432,13 +481,15 @@ class SubmissionPipeline:
             "expanded_search", started, missing_fact_count=len(missing),
             evidence_count=len(merged), fragment_ids=[_evidence_trace_id(item) for item in merged],
         )
-        return merged
+        return merged, fragments
 
     def _record_duration(self, stage: str, started: float, **fields: object) -> None:
+        duration_ms = round((perf_counter() - started) * 1000, 3)
+        self._stage_timings[stage] = self._stage_timings.get(stage, 0.0) + duration_ms
         if self.client.metrics is not None:
             self.client.metrics.record(
                 "pipeline", stage,
-                duration_ms=round((perf_counter() - started) * 1000, 3),
+                duration_ms=duration_ms,
                 error_count=0, retry_count=0, **fields,
             )
 
@@ -1040,7 +1091,8 @@ def _fragment_trace_id(fragment: object) -> str:
     import hashlib
 
     payload = "\u241f".join(
-        str(getattr(fragment, name, "") or "") for name in ("source", "section", "text")
+        str(getattr(fragment, name, "") or "")
+        for name in ("source", "section", "start_char", "end_char", "text")
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
