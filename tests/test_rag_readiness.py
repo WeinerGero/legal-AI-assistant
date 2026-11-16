@@ -97,6 +97,27 @@ def test_concurrent_readiness_checks_share_one_probe() -> None:
     assert calls == 1
 
 
+def test_readiness_probe_does_not_interrupt_active_request() -> None:
+    handler = _handler(_diagnostics(bge=True, qwen=True))
+    handler._model_lock = threading.BoundedSemaphore(1)
+    calls = 0
+
+    def probe() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return _diagnostics(bge=True, qwen=True)
+
+    handler._probe_dependencies = probe
+    handler._model_lock.acquire()
+    try:
+        assert handler._refresh_readiness_if_due() is False
+        assert calls == 0
+    finally:
+        handler._model_lock.release()
+    assert handler._refresh_readiness_if_due() is True
+    assert calls == 1
+
+
 def test_ready_endpoints_distinguish_application_from_rag() -> None:
     from backend.app import app as backend_app
 
