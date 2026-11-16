@@ -285,7 +285,7 @@ def test_model_queue_timeout_becomes_technical_failure() -> None:
     handler._model_lock.acquire()
     started = time.perf_counter()
     try:
-        with pytest.raises(ModelDependencyError, match="model: invalid or unavailable response"):
+        with pytest.raises(ModelDependencyError, match="rag: request deadline exceeded"):
             handler(request.model_dump_json())
     finally:
         handler._model_lock.release()

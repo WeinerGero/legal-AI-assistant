@@ -79,6 +79,18 @@ def test_refusal_drops_stray_evidence_markers_without_inventing_claims() -> None
     assert generation["answer"] == "В документах нет подтверждённых сведений."
 
 
+def test_refusal_drops_bare_evidence_ids_without_inventing_claims() -> None:
+    generation = {
+        "answer_type": "insufficient_evidence",
+        "answer": "Insufficient evidence E001.",
+        "missing_facts": ["requested detail"],
+        "claims": [],
+    }
+    _align_generation_citations(generation)
+    _validate_generation(generation, EVIDENCE)
+    assert "E001" not in generation["answer"]
+
+
 def test_pass_with_unanswered_facts_is_rejected() -> None:
     generation = {
         "answer_type": "answer",
