@@ -328,6 +328,27 @@ class RagHandler:
             ]
             if citations:
                 segments.append({"claim_id": str(claim["claim_id"]), "text": str(claim["text"]), "citations": citations})
+        presentation_blocks = []
+        supported_ids = {str(claim["claim_id"]) for claim in claims}
+        for block in verification.get("presentation_blocks", []):
+            if not isinstance(block, dict) or not isinstance(block.get("segments"), list):
+                continue
+            rendered_segments = []
+            for presentation in block["segments"]:
+                if not isinstance(presentation, dict):
+                    continue
+                claim_ids = [str(value) for value in presentation.get("claim_ids", [])]
+                evidence_ids = [str(value) for value in presentation.get("evidence_ids", [])]
+                if not claim_ids or not set(claim_ids) <= supported_ids:
+                    continue
+                citations = [
+                    {"answer_source_id": source_ids[eid], "number": next(source["number"] for source in sources if source["answer_source_id"] == source_ids[eid])}
+                    for eid in evidence_ids if eid in source_ids
+                ]
+                if citations and str(presentation.get("text", "")).strip():
+                    rendered_segments.append({"claim_id": claim_ids[0], "text": str(presentation["text"]).strip(), "citations": citations})
+            if rendered_segments:
+                presentation_blocks.append({"block_type": block.get("block_type", "conclusion"), "segments": rendered_segments})
         missing = [str(value) for value in generation.get("missing_facts", [])]
         missing.extend(str(value) for value in verification.get("unanswered_facts", []) if str(value) not in missing)
         if segments and missing:
@@ -347,7 +368,7 @@ class RagHandler:
             "missing_information": missing,
             "false_premises": [],
             "clarification_question": None,
-            "blocks": ([{"block_type": "conclusion", "segments": segments}] if segments else [{
+            "blocks": (presentation_blocks or [{"block_type": "conclusion", "segments": segments}] if segments else [{
                 "block_type": "qualification",
                 "segments": [{"claim_id": "C000", "text": str(generation.get("answer", "Недостаточно подтверждённых сведений.")), "citations": []}],
             }]),

@@ -157,8 +157,8 @@ class SubmissionPipeline:
                 self.client.metrics.record("budget", "revision", executed=0)
             if verification["verdict"] == "pass":
                 render_started = perf_counter()
-                result = _render_citations(
-                    generation, evidence, target_language=analysis["target_language"]
+                result = _render_presentation_blocks(
+                    verification, generation, evidence, target_language=analysis["target_language"]
                 )
                 self._record_duration("citation_rendering", render_started)
                 final_started = perf_counter()
@@ -407,6 +407,7 @@ class SubmissionPipeline:
         )
         _normalize_verification(verification, generation, fact_requirements or [])
         _validate_verification(verification, generation, evidence, fact_requirements or [])
+        _normalize_presentation_blocks(verification, generation, evidence)
         self._record_duration(stage, started)
         checks = verification["claim_checks"]
         self._record_quality(
@@ -807,7 +808,7 @@ def _normalize_verification(
             continue
         seen.add(claim_id)
         expected = claim_evidence[claim_id]
-        if check.get("evidence_ids") != expected:
+        if set(check.get("evidence_ids", [])) != set(expected):
             check = {
                 **check,
                 "status": "unsupported",
@@ -923,6 +924,99 @@ def _append_follow_up_question(
         return answer
     suffix = f"\n\n{question}"
     return answer + suffix if len(answer) + len(suffix) <= MAX_RENDERED_ANSWER_CHARS else answer
+
+
+def _normalize_presentation_blocks(verification: dict, generation: dict, evidence: list[dict]) -> None:
+    claims = {item["claim_id"]: item for item in generation.get("claims", []) if isinstance(item, dict)}
+    supported = {
+        item.get("claim_id") for item in verification.get("claim_checks", [])
+        if isinstance(item, dict) and item.get("status") == "supported"
+    }
+    known_evidence = {item.get("evidence_id") for item in evidence if isinstance(item, dict)}
+    blocks = verification.get("presentation_blocks")
+    normalized: list[dict] = []
+    seen_claims: set[str] = set()
+    if isinstance(blocks, list):
+        for block in blocks:
+            if not isinstance(block, dict) or block.get("block_type") not in {
+                "conclusion", "justification", "qualification", "clarification", "refusal"
+            } or not isinstance(block.get("segments"), list):
+                normalized = []
+                break
+            segments = []
+            for segment in block["segments"]:
+                if not isinstance(segment, dict):
+                    normalized = []
+                    break
+                claim_ids = segment.get("claim_ids")
+                evidence_ids = segment.get("evidence_ids")
+                text = segment.get("text")
+                if (
+                    not isinstance(text, str) or not text.strip() or not isinstance(claim_ids, list)
+                    or not claim_ids or not isinstance(evidence_ids, list)
+                    or not set(claim_ids) <= supported or not set(evidence_ids) <= known_evidence
+                ):
+                    normalized = []
+                    break
+                expected = {eid for cid in claim_ids for eid in claims[cid]["evidence_ids"]}
+                if set(evidence_ids) != expected or any(cid in seen_claims for cid in claim_ids):
+                    normalized = []
+                    break
+                numbers = re.findall(r"\d+(?:[.,]\d+)?", " ".join(claims[cid]["text"] for cid in claim_ids))
+                if any(number not in text for number in numbers):
+                    normalized = []
+                    break
+                seen_claims.update(claim_ids)
+                segments.append({"text": text.strip(), "claim_ids": claim_ids, "evidence_ids": evidence_ids})
+            if not normalized and block["segments"] and not segments:
+                break
+            if segments:
+                normalized.append({"block_type": block["block_type"], "segments": segments})
+    if not normalized:
+        normalized = [{
+            "block_type": "conclusion",
+            "segments": [{
+                "text": claims[claim_id]["text"].strip(),
+                "claim_ids": [claim_id],
+                "evidence_ids": list(claims[claim_id]["evidence_ids"]),
+            } for claim_id in claims if claim_id in supported],
+        }]
+        normalized = [block for block in normalized if block["segments"]]
+    verification["presentation_blocks"] = normalized
+
+
+def _render_presentation_blocks(
+    verification: dict, generation: dict, evidence: list[dict], *, target_language: str
+) -> str:
+    blocks = verification.get("presentation_blocks", [])
+    rendered = []
+    for block in blocks if isinstance(blocks, list) else []:
+        lines = []
+        for segment in block.get("segments", []) if isinstance(block, dict) else []:
+            markers = " ".join(f"[{item}]" for item in segment.get("evidence_ids", []))
+            lines.append(f"{segment.get('text', '').strip()} {markers}".strip())
+        if lines:
+            rendered.append(" ".join(lines))
+    if rendered:
+        answer = "\n\n".join(rendered)
+        registry = {item["evidence_id"]: item for item in evidence}
+        ordered_ids = []
+        for block in blocks:
+            for segment in block.get("segments", []):
+                for evidence_id in segment.get("evidence_ids", []):
+                    if evidence_id in registry and evidence_id not in ordered_ids:
+                        ordered_ids.append(evidence_id)
+        for number, evidence_id in enumerate(ordered_ids, 1):
+            answer = answer.replace(f"[{evidence_id}]", f"[{number}]")
+        if not ordered_ids:
+            return answer
+        title = "Источники" if target_language.lower().startswith("ru") else "Sources"
+        lines = [f"{title}:"]
+        for number, evidence_id in enumerate(ordered_ids, 1):
+            item = registry[evidence_id]
+            lines.append(f"[{number}] {item['document']} — {item['section']}")
+        return answer + "\n\n" + "\n".join(lines)
+    return _render_citations(generation, evidence, target_language=target_language)
 
 
 def _render_verified_partial_answer(
