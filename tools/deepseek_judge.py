@@ -67,7 +67,7 @@ def judge_run(run_root: Path, cases: list[dict[str, Any]]) -> None:
                     result["attempts"] = attempt + 1
                     break
                 except Exception as exc:
-                    result = {"case_id": case_id, "error": type(exc).__name__, "attempts": attempt + 1}
+                    result = {"case_id": case_id, "error": type(exc).__name__, "http_status": getattr(getattr(exc, "response", None), "status_code", None), "attempts": attempt + 1}
                     if attempt < 2:
                         time.sleep(1 + attempt)
             results[case_id] = result
