@@ -360,7 +360,10 @@ class HybridIndex:
             )
             reranked = self.client.rerank(
                 ranking_query,
-                [self.fragments[i].text for i in candidates],
+                [
+                    "\n".join(part for part in (self.fragments[i].source, self.fragments[i].section, self.fragments[i].text) if part)
+                    for i in candidates
+                ],
                 len(candidates) if diagnostic_full else final_k,
             )
             if not reranked:
@@ -727,7 +730,7 @@ def _fuse_rankings(
     """Deterministic RRF variants for diagnostics; default preserves 0.5/0.5 RRF."""
     mode = os.environ.get("RRF_MODE", "faiss").strip().casefold()
     if mode == "faiss":
-        channels = [(vec_rankings, 1.0)]
+        channels = [(vec_rankings, 1.0)] if vec_rankings else [(bm_rankings, 1.0)]
     else:
         bm_weight = float(os.environ.get("RRF_BM25_WEIGHT", "0.5"))
         faiss_weight = float(os.environ.get("RRF_FAISS_WEIGHT", str(1.0 - bm_weight)))

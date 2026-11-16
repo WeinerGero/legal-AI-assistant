@@ -37,3 +37,8 @@ def test_rrf_default_preserves_faiss_recall(monkeypatch) -> None:
     monkeypatch.delenv("RRF_MODE", raising=False)
     assert _fuse_rankings([[1, 2]], [[3, 4, 5]], 3) == [3, 4, 5]
 
+
+def test_faiss_mode_keeps_bm25_when_vector_channel_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setenv("RRF_MODE", "faiss")
+    assert _fuse_rankings([[1, 2, 3]], [], 3) == [1, 2, 3]
+

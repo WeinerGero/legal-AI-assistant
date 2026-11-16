@@ -1024,34 +1024,22 @@ def _fact_requirements(requested_facts: list[object]) -> list[dict[str, str]]:
 def _select_evidence_fragments(
     fragments: list[object], fact_requirements: list[dict], limit: int
 ) -> list[object]:
-    """Select a bounded, diverse evidence set using conservative lexical coverage.
-
-    This is only a candidate-diversity heuristic: token overlap never establishes
-    legal support and the verifier remains authoritative.
-    """
-    if len(fragments) <= limit or not fact_requirements:
-        return fragments[:limit]
-    tokenized = [set(_evidence_tokens(getattr(item, "text", ""))) for item in fragments]
-    needs = [set(_evidence_tokens(item.get("description", ""))) for item in fact_requirements]
-    covered: set[int] = set()
-    selected: list[int] = []
-    remaining = set(range(len(fragments)))
-    while remaining and len(selected) < limit:
-        best = max(
-            remaining,
-            key=lambda index: (
-                len({need for need, terms in enumerate(needs) if terms and terms & tokenized[index]} - covered),
-                -index,
-            ),
+    """Keep Qwen rank order and remove only exact duplicate passages."""
+    del fact_requirements
+    selected: list[object] = []
+    seen: set[tuple[str, str, str]] = set()
+    for fragment in fragments:
+        key = (
+            str(getattr(fragment, "source", "")),
+            str(getattr(fragment, "section", "")),
+            " ".join(str(getattr(fragment, "text", "")).split()),
         )
-        newly = {need for need, terms in enumerate(needs) if terms and terms & tokenized[best]}
-        if not newly and selected:
+        if key not in seen:
+            seen.add(key)
+            selected.append(fragment)
+        if len(selected) >= limit:
             break
-        selected.append(best)
-        covered.update(newly)
-        remaining.remove(best)
-    selected.extend(index for index in range(len(fragments)) if index not in selected)
-    return [fragments[index] for index in selected[:limit]]
+    return selected
 
 
 def _select_evidence_records(records: list[dict], fact_requirements: list[dict], limit: int) -> list[dict]:
