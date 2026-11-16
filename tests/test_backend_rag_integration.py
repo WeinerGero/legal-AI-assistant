@@ -20,7 +20,7 @@ os.environ["INDEX_GENERATION_ID"] = "generation-test"
 from backend.schemas import CoreResult, ModelQuestion  # noqa: E402
 from integration.app import create_app  # noqa: E402
 from integration.config import IntegrationConfig  # noqa: E402
-from integration.handler import RagHandler  # noqa: E402
+from integration.handler import ModelDependencyError, RagHandler  # noqa: E402
 from submission.search import Fragment  # noqa: E402
 
 
@@ -265,3 +265,29 @@ def test_parallel_requests_keep_their_own_artifact_snapshot() -> None:
 def test_request_budget_must_finish_before_nginx_timeout(tmp_path) -> None:
     with pytest.raises(ValueError, match="between 0 and 360"):
         IntegrationConfig(tmp_path / "corpus.zip", tmp_path, request_timeout_seconds=360)
+
+
+def test_model_queue_timeout_becomes_technical_failure() -> None:
+    handler, _pipeline = _handler()
+    handler.config = SimpleNamespace(request_timeout_seconds=0.01)
+    request = ModelQuestion.model_validate({
+        "schema_version": "1.0",
+        "request_id": "queue-timeout",
+        "question": "Когда наступает срок оплаты?",
+        "context": {},
+        "recent_messages": [],
+        "summary": "",
+        "corpus_id": "corpus-test",
+        "index_generation_id": "generation-test",
+        "context_revision": 0,
+    })
+
+    handler._model_lock.acquire()
+    started = time.perf_counter()
+    try:
+        with pytest.raises(ModelDependencyError, match="model: invalid or unavailable response"):
+            handler(request.model_dump_json())
+    finally:
+        handler._model_lock.release()
+
+    assert time.perf_counter() - started < 1.0
