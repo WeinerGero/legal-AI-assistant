@@ -1,5 +1,7 @@
 # Backend RAG integration
 
+Основная инструкция по подготовке и трём сценариям запуска находится в [корневом README](../README.md). Этот документ описывает только технические детали интеграционного overlay.
+
 This layer attaches the verified competition RAG to the unchanged FastAPI object from
 `backend.app`. It loads one prebuilt BGE-M3/FAISS index, retains BM25/RRF/Qwen3 search,
 uses DeepSeek analysis/generation/verification, and converts verified claims and exact
@@ -22,7 +24,7 @@ DeepSeek uses `https://matreshkaapi.mooo.com/v1`, `LLM_DEV`, and the explicit mo
 `INDEX_GENERATION_ID` from the bundled manifest SHA-256 at container startup. Neither
 identifier needs to be configured manually.
 
-## Start
+## Технический запуск
 
 From the repository root in PowerShell:
 
