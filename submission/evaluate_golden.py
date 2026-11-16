@@ -182,7 +182,7 @@ def _ensure_run_metadata(run_root: Path, manifest: dict[str, Any]) -> None:
             "reranker": os.environ.get("RERANKER_MODEL"),
         },
         "parameters": {
-            "temperature": os.environ.get("TEMPERATURE", "0.0"),
+            "temperature": os.environ.get("TEMPERATURE", "0.3"),
             "max_workers": os.environ.get("MAX_WORKERS"),
             "time_limit_seconds": os.environ.get("TIME_LIMIT_SECONDS"),
         },

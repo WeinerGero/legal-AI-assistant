@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     if metrics_path.is_file():
         metrics_path.unlink()
     metrics = MetricsRecorder(metrics_path)
-    client = ModelClient(max_tokens=1536, temperature=0.0, metrics=metrics)
+    client = ModelClient(max_tokens=1536, temperature=0.3, metrics=metrics)
     example: dict[str, object] = {
         "provenance": {
             "kind": "single-question full pipeline trace",

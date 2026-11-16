@@ -56,7 +56,7 @@ class ModelClient:
         timeout: float = 90.0,
         seed: int = DEFAULT_SEED,
         max_tokens: int = 1_536,
-        temperature: float = 0.0,
+        temperature: float = 0.3,
         metrics: Any | None = None,
         recording: APIRecordingStore | None = None,
         budget: RuntimeBudget | None = None,

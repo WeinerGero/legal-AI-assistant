@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def run_preflight() -> dict[str, Any]:
     _require_local_environment()
-    client = ModelClient(timeout=60.0, max_tokens=256, temperature=0.0)
+    client = ModelClient(timeout=60.0, max_tokens=256, temperature=0.3)
     local = _load_local_settings()
     expected_key = os.environ.get("LLM_DEV") or local.get("LLM_DEV")
     if not expected_key or client.api_key != expected_key:

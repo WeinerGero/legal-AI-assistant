@@ -39,7 +39,7 @@ def run_verification_probe(output: Path) -> None:
     os.environ.setdefault("LLM_BASE_URL", "https://matreshkaapi.mooo.com/v1")
     os.environ.setdefault("LLM_MODEL", "deepseek-v4.1-flash")
     os.environ.setdefault("API_MODE", "live")
-    client = ModelClient(timeout=60.0, max_tokens=1_536, temperature=0.0)
+    client = ModelClient(timeout=60.0, max_tokens=1_536, temperature=0.3)
     local = _load_local_settings()
     if os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY"):
         key_source = "exported platform-compatible key"
@@ -94,7 +94,7 @@ def run_stage_examples(output: Path) -> None:
     os.environ.setdefault("LLM_BASE_URL", "https://matreshkaapi.mooo.com/v1")
     os.environ.setdefault("LLM_MODEL", "deepseek-v4.1-flash")
     os.environ.setdefault("API_MODE", "live")
-    client = ModelClient(timeout=60.0, max_tokens=1_536, temperature=0.0)
+    client = ModelClient(timeout=60.0, max_tokens=1_536, temperature=0.3)
     cases = json.loads(
         (ROOT / "submission" / "prompt_experiment_cases.json").read_text(encoding="utf-8")
     )["cases"]
