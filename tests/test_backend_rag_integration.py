@@ -21,6 +21,7 @@ from backend.schemas import CoreResult, ModelQuestion  # noqa: E402
 from integration.app import create_app  # noqa: E402
 from integration.config import IntegrationConfig  # noqa: E402
 from integration.handler import ModelDependencyError, RagHandler  # noqa: E402
+from backend.app import _history_result  # noqa: E402
 from submission.search import Fragment  # noqa: E402
 
 
@@ -291,3 +292,16 @@ def test_model_queue_timeout_becomes_technical_failure() -> None:
         handler._model_lock.release()
 
     assert time.perf_counter() - started < 1.0
+
+
+def test_history_question_uses_full_dialogue_without_retrieval() -> None:
+    messages = [SimpleNamespace(role="user", content="Первый вопрос")]
+    for number in range(30):
+        messages.extend([
+            SimpleNamespace(role="assistant", content=f"Ответ {number}"),
+            SimpleNamespace(role="user", content=f"Вопрос {number}"),
+        ])
+    result = _history_result("Какой был мой первый вопрос?", messages)
+    assert result is not None
+    assert result.answer.blocks[0].segments[0].text == "Первый вопрос"
+    assert result.answer.retrieval_audit.performed is False

@@ -105,6 +105,7 @@ class SubmissionPipeline:
             )
             generation_request = {
                 "mode": "initial",
+                "conversation": messages,
                 "target_language": analysis["target_language"],
                 "question": standalone,
                 "requested_facts": analysis["requested_facts"],
@@ -279,6 +280,7 @@ class SubmissionPipeline:
         generation = self._generate(
             {
                 "mode": "recovery",
+                "conversation": messages,
                 "target_language": target_language,
                 "question": analysis["standalone_question"],
                 "requested_facts": analysis["requested_facts"],
