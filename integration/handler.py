@@ -6,7 +6,7 @@ import math
 import threading
 from copy import deepcopy
 from pathlib import Path
-from time import perf_counter
+from time import monotonic, perf_counter
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -57,14 +57,89 @@ class RagHandler:
         )
         self._slots = threading.BoundedSemaphore(config.queue_capacity)
         self._model_lock = threading.BoundedSemaphore(config.max_concurrency)
+        self._state_lock = threading.RLock()
+        self._probe_lock = threading.Lock()
+        self._probe_stop = threading.Event()
         self.diagnostics = self._probe_dependencies()
         self.ready = bool(self.diagnostics["ready"])
+        self._next_probe_at = monotonic() + self._next_probe_delay(self.ready)
+        self._probe_thread = threading.Thread(
+            target=self._readiness_loop, name="rag-readiness", daemon=True
+        )
+        self._probe_thread.start()
 
     def close(self) -> None:
-        self.ready = False
+        if hasattr(self, "_probe_stop"):
+            self._probe_stop.set()
+        if hasattr(self, "_state_lock"):
+            with self._state_lock:
+                self.ready = False
+        else:
+            self.ready = False
+
+    def readiness_snapshot(self) -> dict[str, Any]:
+        self._refresh_readiness_if_due()
+        if not hasattr(self, "_state_lock"):
+            return deepcopy(getattr(self, "diagnostics", {"ready": self.ready}))
+        with self._state_lock:
+            return deepcopy(self.diagnostics)
+
+    def _next_probe_delay(self, ready: bool) -> float:
+        return (
+            self.config.readiness_probe_interval_seconds
+            if ready
+            else self.config.readiness_retry_interval_seconds
+        )
+
+    def _readiness_loop(self) -> None:
+        while not self._probe_stop.wait(self.config.readiness_retry_interval_seconds):
+            self._refresh_readiness_if_due()
+
+    def _refresh_readiness_if_due(self) -> bool:
+        if not hasattr(self, "_probe_lock"):
+            return False
+        now = monotonic()
+        with self._state_lock:
+            if now < self._next_probe_at:
+                return False
+        if not self._probe_lock.acquire(blocking=False):
+            return False
+        try:
+            now = monotonic()
+            with self._state_lock:
+                if now < self._next_probe_at:
+                    return False
+            diagnostics = self._probe_dependencies()
+            ready = bool(diagnostics["ready"])
+            with self._state_lock:
+                self.diagnostics = diagnostics
+                self.ready = ready
+                self._next_probe_at = monotonic() + self._next_probe_delay(ready)
+            return True
+        finally:
+            self._probe_lock.release()
+
+    def _is_ready(self) -> bool:
+        self._refresh_readiness_if_due()
+        if not hasattr(self, "_state_lock"):
+            return self.ready
+        with self._state_lock:
+            return self.ready
+
+    def _mark_dependency_unavailable(self, service: str, error: Exception) -> None:
+        if not hasattr(self, "_state_lock"):
+            return
+        with self._state_lock:
+            diagnostics = deepcopy(self.diagnostics)
+            diagnostics.setdefault(service, {})
+            diagnostics[service] = {"ready": False, "error_type": type(error).__name__}
+            diagnostics["ready"] = False
+            self.diagnostics = diagnostics
+            self.ready = False
+            self._next_probe_at = monotonic()
 
     def __call__(self, payload: str) -> CoreResult:
-        if not self.ready:
+        if not self._is_ready():
             raise ModelDependencyError("rag", "one or more required model dependencies are unavailable")
         if not self._slots.acquire(blocking=False):
             raise QueueFullError("RAG request queue is full")
@@ -101,11 +176,19 @@ class RagHandler:
                 finally:
                     self._model_lock.release()
             except RequiredLocalServiceError as exc:
+                self._mark_dependency_unavailable("local_search", exc)
                 LOGGER.exception("rag_model_failure service=local_model error_type=%s", type(exc).__name__)
                 raise ModelDependencyError("local_model", "request failed") from exc
-            except (httpx.HTTPError, TimeoutError, ValueError) as exc:
-                LOGGER.exception("rag_model_failure service=model error_type=%s", type(exc).__name__)
-                raise ModelDependencyError("model", "invalid or unavailable response") from exc
+            except TimeoutError as exc:
+                LOGGER.exception("rag_request_timeout error_type=%s", type(exc).__name__)
+                raise ModelDependencyError("rag", "request deadline exceeded") from exc
+            except httpx.HTTPError as exc:
+                self._mark_dependency_unavailable("deepseek", exc)
+                LOGGER.exception("rag_model_failure service=deepseek error_type=%s", type(exc).__name__)
+                raise ModelDependencyError("deepseek", "invalid or unavailable response") from exc
+            except ValueError as exc:
+                LOGGER.exception("rag_model_failure service=deepseek error_type=%s", type(exc).__name__)
+                raise ModelDependencyError("deepseek", "invalid model response") from exc
             LOGGER.info(
                 "rag_request_complete request_id=%s duration_ms=%.3f sources=%d stages=%s trace=%s",
                 request.request_id,
@@ -123,14 +206,14 @@ class RagHandler:
             "bge_m3": {"ready": False},
             "qwen3": {"ready": False},
             "deepseek": {"ready": False},
-            "faiss": {"ready": self.index.faiss is not None},
+            "index": {"ready": self.index.faiss is not None},
         }
         try:
             response = httpx.post(
                 f"{self.client.embedding_base_url}/embeddings",
                 headers={"Authorization": f"Bearer {self.client.embedding_api_key}"},
                 json={"model": self.client.embedding_model, "input": ["legal readiness probe"]},
-                timeout=15.0,
+                timeout=self.config.readiness_probe_timeout_seconds,
             )
             response.raise_for_status()
             embedding = response.json().get("data", [{}])[0].get("embedding", [])
@@ -149,7 +232,7 @@ class RagHandler:
                     "documents": ["first legal fragment", "second legal fragment"],
                     "top_n": 2,
                 },
-                timeout=30.0,
+                timeout=self.config.readiness_probe_timeout_seconds,
             )
             response.raise_for_status()
             rows = response.json().get("results", response.json().get("data", []))
@@ -164,16 +247,24 @@ class RagHandler:
         try:
             if not self.client.base_url or not self.client.api_key:
                 raise RuntimeError("DeepSeek configuration is incomplete")
-            self.client.complete_json(
-                "Return a JSON object with a single key ready and boolean value true.",
-                "{}",
-                stage="readiness",
-            )
+            previous_budget = self.client.budget
+            self.client.budget = RuntimeBudget.start(self.config.readiness_probe_timeout_seconds)
+            try:
+                self.client.complete_json(
+                    "Return a JSON object with a single key ready and boolean value true.",
+                    "{}",
+                    stage="readiness",
+                )
+            finally:
+                self.client.budget = previous_budget
             result["deepseek"] = {"ready": True, "model": self.client.llm_model}
         except Exception as exc:
             LOGGER.warning("model_probe service=deepseek error_type=%s", type(exc).__name__)
             result["deepseek"] = {"ready": False, "error_type": type(exc).__name__}
-        result["ready"] = all(bool(item.get("ready")) for item in result.values())
+        result["ready"] = all(
+            bool(result[name].get("ready"))
+            for name in ("index", "bge_m3", "qwen3", "deepseek")
+        )
         return result
 
     def _to_core_result(self, request: ModelQuestion, artifacts: dict[str, Any]) -> CoreResult:

@@ -690,9 +690,9 @@ def _align_generation_citations(generation: dict) -> None:
         if generation.get("missing_facts"):
             generation["answer_type"] = "insufficient_evidence"
         if generation.get("answer_type") == "insufficient_evidence" and isinstance(generation.get("answer"), str):
-            generation["answer"] = re.sub(
-                r"\s*\[E\d{3,}\]", "", generation["answer"]
-            ).strip()
+            generation["answer"] = re.sub(r"\bE\d{3,}\b", "", generation["answer"])
+            generation["answer"] = re.sub(r"\[\s*\]", "", generation["answer"])
+            generation["answer"] = re.sub(r"\s{2,}", " ", generation["answer"]).strip()
         return
     rendered: list[str] = []
     for claim in claims:
