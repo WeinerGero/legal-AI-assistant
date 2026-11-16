@@ -313,6 +313,34 @@ def _history_intent(question: str) -> bool:
     ))
 
 
+def _conversation_result(value: str, audit_pass: str) -> CoreResult:
+    return CoreResult.model_validate({
+        "answer": {
+            "schema_version": "1.0",
+            "answer_id": str(uuid4()),
+            "legal_status": "out_of_scope",
+            "verification_status": "passed",
+            "missing_information": [],
+            "false_premises": [],
+            "clarification_question": None,
+            "blocks": [{"block_type": "clarification", "segments": [{"claim_id": "H001", "text": value, "citations": []}]}],
+            "sources": [],
+            "retrieval_audit": {"performed": False, "passes": [audit_pass]},
+        },
+        "source_locations": [],
+    })
+
+
+def _smalltalk_result(question: str) -> CoreResult | None:
+    normalized = re.sub(r"[^\w]+", " ", question.casefold()).strip()
+    greetings = {"привет", "здравствуй", "здравствуйте", "добрый день", "доброе утро", "добрый вечер", "hi", "hello"}
+    if normalized in greetings:
+        return _conversation_result("Здравствуйте! Чем могу помочь?", "conversation_smalltalk")
+    if normalized in {"спасибо", "благодарю", "спасибо большое"}:
+        return _conversation_result("Пожалуйста!", "conversation_smalltalk")
+    return None
+
+
 def _history_result(question: str, messages: list[Message]) -> CoreResult | None:
     if not _history_intent(question):
         return None
@@ -325,21 +353,7 @@ def _history_result(question: str, messages: list[Message]) -> CoreResult | None
         value = users[0] if users else "В этом диалоге ещё нет предыдущих вопросов."
     else:
         value = users[-1] if users else "В этом диалоге ещё нет предыдущих вопросов."
-    return CoreResult.model_validate({
-        "answer": {
-            "schema_version": "1.0",
-            "answer_id": str(uuid4()),
-            "legal_status": "out_of_scope",
-            "verification_status": "passed",
-            "missing_information": [],
-            "false_premises": [],
-            "clarification_question": None,
-            "blocks": [{"block_type": "clarification", "segments": [{"claim_id": "H001", "text": value, "citations": []}]}],
-            "sources": [],
-            "retrieval_audit": {"performed": False, "passes": ["conversation_history"]},
-        },
-        "source_locations": [],
-    })
+    return _conversation_result(value, "conversation_history")
 
 
 @app.get(
@@ -698,9 +712,9 @@ def send_message(
         conversation.updated_at = datetime.now(timezone.utc)
     db.commit()
 
-    history_result = _history_result(payload.content, list(reversed(recent)))
+    conversation_result = _smalltalk_result(payload.content) or _history_result(payload.content, list(reversed(recent)))
     core_handler = request.app.state.core_handler
-    if core_handler is None and history_result is None:
+    if core_handler is None and conversation_result is None:
         failure = TechnicalFailure(
             error_code="model_unavailable",
             message="The core answer pipeline is not configured.",
@@ -713,7 +727,7 @@ def send_message(
 
     corpus_id = os.getenv("CORPUS_ID", "").strip()
     index_generation_id = os.getenv("INDEX_GENERATION_ID", "").strip()
-    if (not corpus_id or not index_generation_id) and history_result is None:
+    if (not corpus_id or not index_generation_id) and conversation_result is None:
         failure = TechnicalFailure(
             error_code="internal_error",
             message="CORPUS_ID and INDEX_GENERATION_ID must be configured.",
@@ -739,7 +753,7 @@ def send_message(
     )
 
     try:
-        core_result = history_result or answer_question(model_request, core_handler)
+        core_result = conversation_result or answer_question(model_request, core_handler)
     except CoreUnavailable as exc:
         failure = TechnicalFailure(
             error_code="model_unavailable", message=str(exc), request_id=str(uuid4())

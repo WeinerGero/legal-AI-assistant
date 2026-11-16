@@ -21,7 +21,7 @@ from backend.schemas import CoreResult, ModelQuestion  # noqa: E402
 from integration.app import create_app  # noqa: E402
 from integration.config import IntegrationConfig  # noqa: E402
 from integration.handler import ModelDependencyError, RagHandler  # noqa: E402
-from backend.app import _history_result  # noqa: E402
+from backend.app import _history_result, _smalltalk_result  # noqa: E402
 from submission.search import Fragment  # noqa: E402
 
 
@@ -317,3 +317,31 @@ def test_history_question_skips_earlier_history_requests() -> None:
     result = _history_result("Что я спросил?", messages)
     assert result is not None
     assert result.answer.blocks[0].segments[0].text == "Какой срок оплаты по договору А?"
+
+
+def test_greeting_does_not_require_rag_but_legal_question_does() -> None:
+    from fastapi.testclient import TestClient
+    from backend.app import app, lifespan
+
+    assert _smalltalk_result("Привет!") is not None
+    assert _smalltalk_result("Привет, какой срок оплаты?") is None
+    previous_handler = app.state.core_handler
+    previous_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = lifespan
+    try:
+        with TestClient(app) as client:
+            app.state.core_handler = None
+            login = client.post("/api/v1/auth/login", json={"login": "tester", "password": "test-password"})
+            headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+            conversation = client.post("/api/v1/conversations", json={}, headers=headers)
+            conversation_id = conversation.json()["id"]
+            endpoint = f"/api/v1/conversations/{conversation_id}/messages"
+            greeting = client.post(endpoint, json={"content": "привет"}, headers=headers)
+            assert greeting.status_code == 201
+            assert greeting.json()["retrieval_audit"] == {"performed": False, "passes": ["conversation_smalltalk"]}
+            assert greeting.json()["sources"] == []
+            legal = client.post(endpoint, json={"content": "Какой срок оплаты?"}, headers=headers)
+            assert legal.status_code == 503
+    finally:
+        app.state.core_handler = previous_handler
+        app.router.lifespan_context = previous_lifespan
