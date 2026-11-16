@@ -45,27 +45,35 @@ STAGE_NAMES = (
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--partition", choices=[f"P{index:02d}" for index in range(1, 14)])
+    parser.add_argument("--all", action="store_true", help="run all 13 partitions sequentially")
     parser.add_argument("--run-id")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--recalculate", action="store_true")
     parser.add_argument("--dev-local", action="store_true", help="use the existing DEV_LOCAL services")
     parser.add_argument("--strict-quality", action="store_true", help="fail when required quality traces are missing")
+    parser.add_argument("--resume", action="store_true", help="resume completed run without repeating completed cases")
+    parser.add_argument("--judge", choices=("none", "deepseek"), default="none")
     args = parser.parse_args(argv)
     cases = _load_cases()
     manifest = _load_partition_manifest(cases)
     run_id = args.run_id or f"local-{_git('rev-parse', '--short=7', 'HEAD')}"
     run_root = PARTITION_RUNS / run_id
-    if args.status or (not args.partition and not args.recalculate):
+    if args.status or (not args.partition and not args.all and not args.recalculate):
         _print_partition_status(manifest, run_root)
         return 0
     if args.dev_local:
         _configure_dev_local()
-    if args.partition:
+    if args.partition or args.all:
         reason = _availability_reason()
         if reason:
             raise RuntimeError(reason)
-        _run_partition(args.partition, manifest, cases, run_root)
+        partitions = [args.partition] if args.partition else [f"P{index:02d}" for index in range(1, 14)]
+        for partition_id in partitions:
+            _run_partition(partition_id, manifest, cases, run_root)
     _recalculate_partition_run(manifest, cases, run_root, strict_quality=args.strict_quality)
+    if args.judge == "deepseek":
+        from tools.deepseek_judge import judge_run
+        judge_run(run_root, cases)
     _print_partition_status(manifest, run_root)
     return 0
 
