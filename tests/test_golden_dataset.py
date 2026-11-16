@@ -145,3 +145,19 @@ def test_metric_calculator_is_deterministic_with_duplicate_results() -> None:
     second = labeled_ranking_metrics(["a", "a", "b"], {"a": 1, "b": 1}, 3)
     assert first == second
 
+
+def test_quality_metrics_gate_writes_replay_artifacts(tmp_path: Path) -> None:
+    payload = golden_runner._write_quality_metrics_at(
+        tmp_path,
+        [
+            {"kind": "outcome", "stage": "question", "question_id": "Q1"},
+            *[
+                {"kind": "rag", "stage": stage, "question_id": "Q1"}
+                for stage in ("bm25", "faiss", "fusion", "rerank", "evidence_selection")
+            ],
+        ],
+    )
+    assert payload["status"] == "complete"
+    assert (tmp_path / "quality_metrics.json").is_file()
+    assert (tmp_path / "quality_metrics.md").is_file()
+

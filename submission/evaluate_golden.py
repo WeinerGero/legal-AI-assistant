@@ -49,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--recalculate", action="store_true")
     parser.add_argument("--dev-local", action="store_true", help="use the existing DEV_LOCAL services")
+    parser.add_argument("--strict-quality", action="store_true", help="fail when required quality traces are missing")
     args = parser.parse_args(argv)
     cases = _load_cases()
     manifest = _load_partition_manifest(cases)
@@ -64,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         if reason:
             raise RuntimeError(reason)
         _run_partition(args.partition, manifest, cases, run_root)
-    _recalculate_partition_run(manifest, cases, run_root)
+    _recalculate_partition_run(manifest, cases, run_root, strict_quality=args.strict_quality)
     _print_partition_status(manifest, run_root)
     return 0
 
@@ -197,7 +198,7 @@ def _write_partition_files(partition_dir: Path, events: list[dict[str, Any]], st
     )
 
 
-def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, Any]], run_root: Path) -> None:
+def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, Any]], run_root: Path, *, strict_quality: bool = False) -> None:
     rows: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
     for part in manifest["partitions"]:
@@ -212,6 +213,9 @@ def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, A
                 partition_events,
                 {},
             )
+            quality = _write_quality_metrics_at(directory, partition_events)
+            if strict_quality and quality["status"] == "quality_incomplete":
+                raise RuntimeError(f"quality metrics incomplete for {part['partition_id']}: {quality['missing_traces']}")
     run_metadata = _read_json(run_root / "run.json", {})
     state = {
         "reason": None,
@@ -224,6 +228,26 @@ def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, A
     }
     state["codex_evaluations"] = {"cases": {}, "partitions": []}
     _write_outputs(cases, rows, events, state)
+
+
+def _write_quality_metrics_at(directory: Path, events: list[dict[str, Any]]) -> dict[str, Any]:
+    question_ids = {str(e.get("question_id")) for e in events if e.get("kind") == "outcome" and e.get("stage") == "question"}
+    required = {"bm25", "faiss", "fusion", "rerank", "evidence_selection"}
+    seen = {(str(e.get("question_id")), str(e.get("stage"))) for e in events if e.get("kind") == "rag"}
+    missing = [f"{question}:{stage}" for question in sorted(question_ids) for stage in sorted(required) if (question, stage) not in seen]
+    metric_path = directory / "architecture_metrics.csv"
+    rows = list(csv.DictReader(metric_path.open(encoding="utf-8", newline=""))) if metric_path.is_file() else []
+    payload = {
+        "schema_version": 1,
+        "status": "quality_incomplete" if missing else "complete",
+        "questions": len(question_ids),
+        "missing_traces": missing,
+        "metrics": rows,
+        "method": "deterministic replay from saved events; N/A requires an explicit reason",
+    }
+    _atomic_json(directory / "quality_metrics.json", payload)
+    _atomic_text(directory / "quality_metrics.md", "# Quality metrics\n\n" + f"- Status: `{payload['status']}`\n- Questions: {len(question_ids)}\n- Missing required traces: {', '.join(missing) or 'none'}\n- Metrics: {len(rows)} rows\n")
+    return payload
 
 
 def _read_codex_evaluations(manifest: dict[str, Any], run_root: Path) -> dict[str, Any]:
