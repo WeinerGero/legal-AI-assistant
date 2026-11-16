@@ -1,190 +1,165 @@
+<div align="center">
+
 # Юридический ИИ-ассистент
 
-Веб-приложение для работы с юридическими документами. Интерфейс на чистых
-HTML, CSS и JavaScript раздаётся Nginx; API реализован на FastAPI; PostgreSQL
-хранит пользователя, диалоги и сообщения. Запросы интерфейса к `/api/*`
-проксируются Nginx на API внутри Docker-сети.
+Веб-приложение для проверяемых ответов по юридическим документам с гибридным поиском и точными ссылками на исходные фрагменты.
 
-Полное проектное ТЗ — [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+**Приложение**
 
-## Запуск веб-приложения
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
 
-1. Скопируйте `.env.example` в `.env` в корне репозитория.
-2. Замените `<set-me>` на локальные значения `POSTGRES_PASSWORD`,
-   `APP_USER_LOGIN` и `APP_USER_PASSWORD`. Не публикуйте `.env` и не помещайте
-   настоящие секреты в `.env.example`.
-3. Из корня репозитория выполните:
+**Поиск и модели**
 
-   ```bash
-   docker compose up --build
-   ```
+![BM25](https://img.shields.io/badge/Search-BM25-5865F2) ![FAISS](https://img.shields.io/badge/Vector-FAISS-0467DF) ![BGE-M3](https://img.shields.io/badge/Embeddings-BGE--M3-8A2BE2) ![Qwen3](https://img.shields.io/badge/Reranker-Qwen3-7C3AED) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-4D6BFE)
 
-Откройте интерфейс по адресу `http://localhost:8081`. Swagger API доступен по
-адресу `http://localhost:8001/docs`. Порты можно переопределить переменными
-`FRONTEND_PORT` и `API_PORT` в `.env`; значения по умолчанию — `8081` и `8001`.
+**Инфраструктура**
 
-При старте API автоматически создаёт пользователя из `APP_USER_LOGIN` и
-`APP_USER_PASSWORD`. Входите в интерфейс с этими учётными данными. Пользователь
-и его диалоги хранятся в PostgreSQL.
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white) ![Nginx](https://img.shields.io/badge/Nginx-009639?logo=nginx&logoColor=white) ![CUDA](https://img.shields.io/badge/NVIDIA-CUDA-76B900?logo=nvidia&logoColor=white)
 
-Остановить контейнеры, не удаляя данные базы:
+[Возможности](#возможности) · [Архитектура](#архитектура) · [Быстрый запуск](#быстрый-запуск) · [Проверка](#проверка-работоспособности) · [Документация](#документация-и-разработка)
+
+</div>
+
+## Возможности
+
+- Диалоги по юридическим документам с сохранением истории в PostgreSQL.
+- Гибридный поиск BM25 + BGE-M3/FAISS и объединение результатов через RRF.
+- Переранжирование кандидатов локальной моделью Qwen3 Reranker.
+- Генерация и отдельная проверка утверждений через DeepSeek с температурой `0.3`.
+- Ответы только по подтверждённым доказательствам; источник открывается с точной подсветкой исходного диапазона.
+
+## Архитектура
+
+```mermaid
+flowchart LR
+    U[Пользователь] --> W[Nginx и веб-интерфейс]
+    W --> A[FastAPI]
+    A --> DB[(PostgreSQL)]
+    A --> R[Юридический RAG]
+    R --> A
+```
+
+```mermaid
+flowchart LR
+    Q[Вопрос] --> DA[DeepSeek: анализ]
+    DA --> H[BM25 + BGE-M3 / FAISS]
+    H --> F[RRF]
+    F --> QR[Qwen3 Reranker]
+    QR --> DG[DeepSeek: генерация]
+    DG --> DV[DeepSeek: проверка]
+    DV --> O[Ответ с проверенными источниками]
+```
+
+PostgreSQL хранит пользователей, диалоги, сообщения, ответы и диапазоны источников. Смысловой канал использует предварительно построенный FAISS-индекс из `submission/assets/bge_m3`; BM25 строится по тому же корпусу. Backend принимает только строгий `CoreResult`, в котором каждая публичная ссылка сопоставлена с каноническим текстом документа.
+
+## Быстрый запуск
+
+Требуются Git и Docker Desktop с Docker Compose. Создайте локальный файл окружения; `.env` не должен попадать в Git.
+
+### Windows PowerShell
+
+```powershell
+Copy-Item .env.example .env
+docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml -f integration/docker-compose.models.yml up -d --build
+```
+
+### Linux
 
 ```bash
-docker compose down
+cp .env.example .env
+docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml -f integration/docker-compose.models.yml up -d --build
 ```
 
-## Связь интерфейса и API
+Заполните в `.env` как минимум `POSTGRES_PASSWORD`, `APP_USER_LOGIN`, `APP_USER_PASSWORD` и ключ DeepSeek `LLM_DEV`. Рабочий RAG доступен по адресам:
 
-Nginx раздаёт статику и направляет `/api/*` в сервис `api`. Интерфейс использует
-`/api/v1` и bearer-токен из ответа входа.
+- веб-интерфейс — <http://localhost:8082>;
+- API — <http://localhost:8001>;
+- Swagger UI — <http://localhost:8001/docs>;
+- readiness RAG — <http://localhost:8001/integration/readyz>.
 
-- `POST /api/v1/auth/login`, `POST /api/v1/auth/logout` — вход и выход;
-- `GET/POST /api/v1/conversations` — список и создание диалогов;
-- `GET/DELETE /api/v1/conversations/{id}` — просмотр и удаление диалога;
-- `GET/POST /api/v1/conversations/{id}/messages` — история и отправка вопроса;
-- `GET /api/v1/answers/{answer_id}/sources/{answer_source_id}` — фрагмент
-  документа с выделенной цитатой.
+Базовый `docker compose up -d --build` запускает только Nginx, FastAPI и PostgreSQL. Для юридических ответов используйте RAG-overlay, показанный выше.
 
-Интерфейс загружает историю диалогов с API; избранное хранится локально в
-браузере. Поиск и фильтры применяются к загруженной истории. Ответы модели
-отображаются в центре, источники — в панели справа.
+## NVIDIA CUDA и CPU
 
-В интерфейсе также доступны поиск по диалогам и сообщениям, фильтры по периоду
-и типам документов, избранное, повтор запроса, форматирование ответов и
-просмотр выделенного фрагмента источника.
+CPU-запуск использует `integration/docker-compose.models.yml`. Для NVIDIA GPU добавьте CUDA-overlay:
 
-Вопрос отправляется в `POST /api/v1/conversations/{id}/messages`:
-
-```json
-{
-  "content": "Вопрос по договору",
-  "context": {
-    "active_document": {
-      "contract_number": "<номер договора>",
-      "counterparty": "<контрагент>"
-    },
-    "event_date": null
-  }
-}
+```powershell
+docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml -f integration/docker-compose.models.yml -f integration/docker-compose.models.cuda.yml up -d --build
 ```
 
-`context` можно не передавать в следующих сообщениях: он сохраняется в
-диалоге. Чтобы очистить выбранный документ, передайте
-`"active_document": null`. Бэкенд сам добавляет до шести предыдущих сообщений
-в запрос к core. Ответ возвращается в JSON-схеме `AnswerResponse` из
-`docs/ARCHITECTURE.md`.
+Для Linux применяется та же команда. Нужны NVIDIA Driver, NVIDIA Container Toolkit и работающая команда `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`.
 
-### Состояние подключения core
+Веса BGE-M3 и Qwen3 сохраняются в именованных Docker volumes и повторно не скачиваются при обычном перезапуске. Если модели уже запущены отдельно на Windows, задайте `EMBEDDER_BASE_URL=http://host.docker.internal:8081/v1` и `RERANKER_BASE_URL=http://host.docker.internal:8080/v1`; адрес `127.0.0.1` внутри Backend-контейнера указывает на сам контейнер.
 
-Веб-интерфейс и API запускаются вместе, но обработчик core пока не подключён:
-`LegalPipeline.run()` остаётся заглушкой. Поэтому API принимает и сохраняет
-вопрос, но сейчас отвечает структурированной ошибкой `503`, а не выдуманным
-юридическим ответом.
+CUDA-overlay оставляет llama.cpp автоматически подбирать число слоёв Qwen3 в VRAM с резервом 512 MiB. Это важно для видеокарт на 4 ГБ, где BGE-M3 и reranker используют GPU одновременно.
 
-Для открытия цитат обработчик core должен возвращать `answer` и внутренний
-массив `source_locations`. Для каждого источника в нём нужны
-`answer_source_id`, UUID документа, версии и пункта, канонический текст и
-диапазон выделения (`start_char`, `end_char`). API сохраняет эти данные и
-возвращает `before`, `highlight` и `after` по маршруту
-`GET /api/v1/answers/{answer_id}/sources/{answer_source_id}`. При подключении
-обработчика также задайте `CORPUS_ID` и `INDEX_GENERATION_ID` в `.env`.
+## Переменные окружения
 
-Настройка `mock` в `frontend/public/config.js` управляет демо-режимом:
-`"auto"` включает его, если API недоступно; `false` отключает демонстрационные
-ответы. В демо-режиме используется вход `demo` / `demo`, а ответы берутся из
-заготовленных данных `frontend/public/mock-data.js`.
-ммм
-## Состав проекта
-
-| Путь | Назначение |
+| Переменная | Назначение |
 | --- | --- |
-| `frontend/public/` | HTML, CSS, JavaScript и данные демо-режима |
-| `frontend/nginx/default.conf.template` | Раздача интерфейса и прокси `/api/*` |
-| `frontend.Dockerfile` | Сборка контейнера интерфейса |
-| `Dockerfile` | Сборка контейнера FastAPI |
-| `docker-compose.yml` | Совместный запуск PostgreSQL, API и интерфейса |
-| `.dockerignore` | Исключения из общего контекста Docker-сборки |
-| `backend/` | API входа, диалогов, сообщений и источников |
-| `core/` | Контракты и предметное ядро |
-| `submission/` | Конкурсная точка входа |
-| `docs/` | Архитектура и описание API |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | База и прикладная роль PostgreSQL |
+| `APP_USER_LOGIN`, `APP_USER_PASSWORD` | Локальная учётная запись веб-приложения |
+| `API_PORT`, `FRONTEND_PORT` | Публикуемые порты API и интерфейса |
+| `LLM_BASE_URL`, `LLM_DEV`, `LLM_MODEL` | Endpoint, ключ и модель DeepSeek |
+| `TEMPERATURE` | Температура рабочих вызовов DeepSeek; должна быть `0.3` |
+| `EMBEDDER_BASE_URL`, `EMB_MODEL`, `EMBEDDER_API_KEY` | BGE-M3 embeddings API |
+| `RERANKER_BASE_URL`, `RERANKER_MODEL`, `RERANKER_API_KEY` | Qwen3 reranker API |
+| `TOP_K`, `RERANKER_TOP_N` | Размеры поисковой и финальной выборок |
+| `RAG_MODEL_TIMEOUT_SECONDS` | Максимум одного сетевого вызова модели |
+| `RAG_REQUEST_TIMEOUT_SECONDS` | Общий бюджет Backend-запроса, меньший proxy timeout |
 
-## Предметное ядро и конкурсный запуск
+`CORPUS_ID` и `INDEX_GENERATION_ID` при RAG-запуске вычисляются из корпуса и manifest индекса. Значения секретов не выводятся в логи и документацию.
 
-Юридически значимые утверждения должны подтверждаться источниками из текущего
-корпуса. Core содержит контракты, поиск, генерацию, проверку и сборку
-доказательств; конкурсный сценарий читает `questions.csv` и создаёт
-`submission.csv`.
+## Проверка работоспособности
 
-Единый Poetry-проект и зависимости описаны в `.agents`:
+```powershell
+docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml -f integration/docker-compose.models.yml ps
+Invoke-RestMethod http://localhost:8001/healthz
+Invoke-RestMethod http://localhost:8001/integration/readyz | ConvertTo-Json -Depth 6
+```
 
-```bash
+В `dependencies` readiness должны быть `ready: true` для `bge_m3`, `qwen3`, `deepseek` и `faiss`. Затем войдите в интерфейс, создайте диалог, отправьте вопрос и откройте карточку источника. Полная проверка считается успешной, только если ответ содержит проверенные источники, диалог сохранён после обновления страницы, а открытый документ показывает непустой выделенный фрагмент.
+
+Диагностика:
+
+```powershell
+docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml -f integration/docker-compose.models.yml logs --tail 200 api bge-m3 qwen3-reranker
+docker stats --no-stream
+nvidia-smi
+```
+
+Техническая недоступность обязательной модели возвращается как HTTP `503`, а исчерпание общего бюджета обрабатывается Backend до истечения 360-секундного timeout Nginx. Это не подменяется юридическим ответом «недостаточно доказательств».
+
+Остановка без удаления PostgreSQL, индексов и весов:
+
+```powershell
+docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml -f integration/docker-compose.models.yml stop
+```
+
+## Структура репозитория
+
+| Каталог | Назначение |
+| --- | --- |
+| `backend/` | FastAPI, аутентификация и хранение диалогов/источников |
+| `frontend/` | Статический веб-интерфейс и конфигурация Nginx |
+| `integration/` | Подключение конкурсного RAG к Backend и Compose-overlays |
+| `core/` | Доменные контракты юридического конвейера |
+| `submission/` | BM25/FAISS, модели, генерация, проверка и конкурсный CLI |
+| `tests/` | Контрактные, регрессионные и Golden-тесты |
+| `docs/` | Архитектурные и API-контракты |
+
+## Документация и разработка
+
+- [Архитектурный контракт](docs/ARCHITECTURE.md)
+- [Описание API](docs/api.md)
+- [Интеграция RAG](integration/README.md)
+- [Правила агентов](.agents) и [краткая памятка](AGENTS.md)
+- [История изменений](CHANGELOG.md)
+
+```powershell
 poetry install
-poetry run python -m compileall core submission
+poetry run python -m compileall core submission integration
+poetry run pytest
 ```
 
-Для конкурсного запуска:
-
-```bash
-DATA_DIR=./data poetry run python submission/solution.py
-```
-
-## Полный запуск юридического ассистента (RAG)
-
-Нужны только Docker Desktop с Compose и Git. Клонируйте репозиторий и создайте
-корневой файл `.env`:
-
-```bash
-copy .env.example .env
-```
-
-Заполните `POSTGRES_PASSWORD`, `APP_USER_LOGIN`, `APP_USER_PASSWORD` и `LLM_DEV`.
-`LLM_DEV` — ключ DeepSeek для `https://matreshkaapi.mooo.com/v1`; ключ не
-помещайте в Dockerfile и не публикуйте.
-
-### CPU
-
-```bash
-docker compose -f docker-compose.yml \
-  -f integration/docker-compose.rag.yml \
-  -f integration/docker-compose.models.yml up --build
-```
-
-### NVIDIA CUDA
-
-```bash
-docker compose -f docker-compose.yml \
-  -f integration/docker-compose.rag.yml \
-  -f integration/docker-compose.models.yml \
-  -f integration/docker-compose.models.cuda.yml up --build
-```
-
-При первом запуске Docker скачает BGE-M3 и Qwen3 в постоянные volumes.
-Повторный запуск использует уже загруженные веса. В текущем репозитории Qwen
-доступен в `Q3_K_M`; если Hugging Face недоступен по TLS, контейнер модели не
-запустится до устранения сетевой проблемы.
-
-Откройте интерфейс: <http://localhost:8082>. API: <http://localhost:8001/docs>.
-Проверка готовности RAG:
-
-```bash
-curl http://localhost:8001/integration/readyz
-```
-
-Остановка без удаления данных PostgreSQL и весов:
-
-```bash
-docker compose -f docker-compose.yml \
-  -f integration/docker-compose.rag.yml \
-  -f integration/docker-compose.models.yml down
-```
-
-Если `/integration/readyz` показывает `rag_ready=false`, проверьте:
-
-```bash
-docker compose ps
-docker compose logs api bge-m3 qwen3-reranker
-```
-
-Правила для людей и агентов — [`.agents`](.agents) и [`AGENTS.md`](AGENTS.md).
-Изменения зависимостей фиксируются в [`CHANGELOG.md`](CHANGELOG.md).
+Зависимости зафиксированы в `pyproject.toml` и `poetry.lock`. Логика RAG не содержит ответов или специальных порогов для известных вопросов Golden Dataset.

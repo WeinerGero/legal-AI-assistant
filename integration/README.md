@@ -48,9 +48,10 @@ DeepSeek configuration/control-call, and FAISS checks. A failed mandatory depend
 reported as `rag_ready=false`; requests return HTTP 503 with a technical error code.
 
 The integration limits Qwen3/model concurrency to one request and bounds the waiting
-queue. The interactive Qwen3-4B batch is bounded to 12 candidates and six returned
-evidence fragments. Model calls time out after 300 seconds; frontend and nginx use 360
-seconds.
+queue. The model overlay uses 30 reranker candidates and ten returned evidence fragments.
+Each model call is limited to 300 seconds, while the complete Backend request has a
+330-second monotonic budget and returns a technical failure before the 360-second frontend
+and Nginx limit. Successful request logs include per-stage durations.
 
 ## Integrity check
 
