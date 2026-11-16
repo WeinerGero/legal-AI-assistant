@@ -59,7 +59,11 @@ def create_app(config: IntegrationConfig | None = None) -> FastAPI:
             content={
                 "error_code": "model_unavailable",
                 "dependency": exc.service,
-                "message": "Required model dependency is unavailable.",
+                "message": (
+                    "DeepSeek временно недоступен. Повторите запрос."
+                    if exc.service == "deepseek"
+                    else "Модель юридического поиска временно недоступна. Повторите запрос."
+                ),
             },
         )
 

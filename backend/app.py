@@ -6,6 +6,7 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -304,18 +305,7 @@ def _answer_text(answer: AnswerResponse) -> str:
     )
 
 
-def _history_result(question: str, messages: list[Message]) -> CoreResult | None:
-    normalized = question.casefold()
-    if not any(marker in normalized for marker in ("что я спросил", "первый вопрос", "что ты ответил", "повтори мой")):
-        return None
-    users = [item.content for item in messages if item.role == "user"]
-    assistants = [item.content for item in messages if item.role == "assistant"]
-    if "что ты ответил" in normalized:
-        value = assistants[-1] if assistants else "Ранее я ещё не отвечал в этом диалоге."
-    elif "первый" in normalized:
-        value = users[0] if users else "В этом диалоге ещё нет предыдущих вопросов."
-    else:
-        value = users[-1] if users else "В этом диалоге ещё нет предыдущих вопросов."
+def _conversation_result(value: str, audit_pass: str) -> CoreResult:
     return CoreResult.model_validate({
         "answer": {
             "schema_version": "1.0",
@@ -327,10 +317,33 @@ def _history_result(question: str, messages: list[Message]) -> CoreResult | None
             "clarification_question": None,
             "blocks": [{"block_type": "clarification", "segments": [{"claim_id": "H001", "text": value, "citations": []}]}],
             "sources": [],
-            "retrieval_audit": {"performed": False, "passes": ["conversation_history"]},
+            "retrieval_audit": {"performed": False, "passes": [audit_pass]},
         },
         "source_locations": [],
     })
+
+
+def _history_result(target: str, messages: list[Message]) -> CoreResult:
+    users = []
+    for index, item in enumerate(messages):
+        if item.role != "user":
+            continue
+        next_item = messages[index + 1] if index + 1 < len(messages) else None
+        audit = {}
+        if next_item is not None and next_item.role == "assistant":
+            audit = (getattr(next_item, "answer_json", None) or {}).get("retrieval_audit", {})
+        if audit.get("performed") is not False:
+            users.append(item.content)
+    assistants = [item.content for item in messages if item.role == "assistant"]
+    if target == "last_assistant":
+        value = assistants[-1] if assistants else "Ранее я ещё не отвечал в этом диалоге."
+    elif target == "first_user":
+        value = users[0] if users else "В этом диалоге ещё нет предыдущих вопросов."
+    elif target == "last_user":
+        value = users[-1] if users else "В этом диалоге ещё нет предыдущих вопросов."
+    else:
+        raise ValueError("unknown conversation history target")
+    return _conversation_result(value, "conversation_history")
 
 
 @app.get(
@@ -703,7 +716,17 @@ def send_message(
 
     corpus_id = os.getenv("CORPUS_ID", "").strip()
     index_generation_id = os.getenv("INDEX_GENERATION_ID", "").strip()
-    if not corpus_id or not index_generation_id:
+    route_started = monotonic()
+    route_fn = getattr(core_handler, "route_question", None)
+    route = route_fn(payload.content) if callable(route_fn) else None
+    if route is not None and route.route == "conversation":
+        if route.action == "history":
+            conversation_result = _history_result(route.history_target, list(reversed(recent)))
+        else:
+            conversation_result = _conversation_result(route.reply, "conversation_reply")
+    else:
+        conversation_result = None
+    if (not corpus_id or not index_generation_id) and conversation_result is None:
         failure = TechnicalFailure(
             error_code="internal_error",
             message="CORPUS_ID and INDEX_GENERATION_ID must be configured.",
@@ -714,6 +737,7 @@ def send_message(
             content=failure.model_dump(mode="json"),
         )
 
+    request_budget = getattr(getattr(core_handler, "config", None), "request_timeout_seconds", 330.0)
     model_request = ModelQuestion(
         schema_version="1.0",
         request_id=f"req-{uuid4()}",
@@ -726,10 +750,12 @@ def send_message(
         corpus_id=corpus_id,
         index_generation_id=index_generation_id,
         context_revision=context_revision,
+        answer_style=route.answer_style if route is not None else "standard",
+        remaining_budget_seconds=max(0.001, request_budget - (monotonic() - route_started)),
     )
 
     try:
-        core_result = _history_result(payload.content, list(reversed(recent))) or answer_question(model_request, core_handler)
+        core_result = conversation_result or answer_question(model_request, core_handler)
     except CoreUnavailable as exc:
         failure = TechnicalFailure(
             error_code="model_unavailable", message=str(exc), request_id=str(uuid4())

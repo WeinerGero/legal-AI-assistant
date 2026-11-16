@@ -202,16 +202,16 @@
   }
 
   function normalizeAnswer(r) {
-    const segments = (r.blocks || []).flatMap((block) => block.segments || []);
     const answer = typeof r.answer === "string" ? r.answer :
-      segments.map((segment) => {
+      (r.blocks || []).map((block) => (block.segments || []).map((segment) => {
         const citations = (segment.citations || []).map((citation) => `[${citation.number}]`).join(" ");
         return segment.text + (citations ? " " + citations : "");
-      }).join("\n\n") || r.content || r.text || "";
+      }).join(" ")).filter(Boolean).join("\n\n") || r.content || r.text || "";
     let status = r.status || null;
     if (!status) {
       if (r.legal_status === "answered" && r.verification_status === "passed") status = "confirmed";
       else if (r.legal_status === "partial" || r.legal_status === "clarification_required" || r.verification_status === "partial") status = "partial";
+      else if (r.legal_status === "out_of_scope" && r.retrieval_audit?.performed === false) status = null;
       else if (r.legal_status === "insufficient_evidence" || r.legal_status === "out_of_scope") status = "not_found";
     }
     const sources = (r.sources || r.citations || []).map((s, i) => ({
@@ -475,7 +475,7 @@
           foot.querySelector(".retry").addEventListener("click", (e) => { e.stopPropagation(); retry(); });
         } else {
           if (m.status && STATUS_LABELS[m.status]) foot.innerHTML += `<span class="status ${m.status}">${STATUS_LABELS[m.status]}</span>`;
-          foot.innerHTML += `<button type="button" class="msg-action copy">Скопировать с источниками</button>`;
+          foot.innerHTML += `<button type="button" class="msg-action copy">${(m.sources || []).length ? "Скопировать с источниками" : "Скопировать"}</button>`;
           foot.querySelector(".copy").addEventListener("click", (e) => { e.stopPropagation(); copyText(plainWithSources(m)); });
         }
         div.appendChild(foot);

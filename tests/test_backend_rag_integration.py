@@ -22,6 +22,8 @@ from integration.app import create_app  # noqa: E402
 from integration.config import IntegrationConfig  # noqa: E402
 from integration.handler import ModelDependencyError, RagHandler  # noqa: E402
 from backend.app import _history_result  # noqa: E402
+from backend.core_gateway import CoreUnavailable  # noqa: E402
+from integration.routing import RouteDecision, parse_route  # noqa: E402
 from submission.search import Fragment  # noqa: E402
 
 
@@ -100,6 +102,9 @@ def _handler() -> tuple[RagHandler, FakePipeline]:
     handler._slots = threading.BoundedSemaphore(2)
     handler._model_lock = threading.BoundedSemaphore(1)
     handler.ready = True
+    handler.route_question = lambda question: RouteDecision(
+        route="legal", answer_style="standard", action=None, history_target=None, reply=None
+    )
     return handler, pipeline
 
 
@@ -118,6 +123,7 @@ def test_handler_returns_strict_core_result_with_exact_source_span() -> None:
         "corpus_id": "corpus-test",
         "index_generation_id": "generation-test",
         "context_revision": 2,
+        "answer_style": "detailed",
     })
 
     result = handler(request.model_dump_json())
@@ -130,6 +136,7 @@ def test_handler_returns_strict_core_result_with_exact_source_span() -> None:
         "1.1. Оплата производится в течение пяти дней."
     )
     submitted = json.loads(pipeline.input)
+    assert submitted["answer_style"] == "detailed"
     assert submitted["messages"][0]["content"] == "Речь о договоре A-1"
     assert "2025-01-15" in submitted["messages"][-1]["content"]
     assert "Обсуждается оплата" in submitted["messages"][-1]["content"]
@@ -301,7 +308,121 @@ def test_history_question_uses_full_dialogue_without_retrieval() -> None:
             SimpleNamespace(role="assistant", content=f"Ответ {number}"),
             SimpleNamespace(role="user", content=f"Вопрос {number}"),
         ])
-    result = _history_result("Какой был мой первый вопрос?", messages)
+    result = _history_result("first_user", messages)
     assert result is not None
     assert result.answer.blocks[0].segments[0].text == "Первый вопрос"
     assert result.answer.retrieval_audit.performed is False
+
+
+def test_history_question_skips_earlier_history_requests() -> None:
+    messages = [
+        SimpleNamespace(role="user", content="Какой срок оплаты по договору А?"),
+        SimpleNamespace(role="assistant", content="Срок подтверждён источником."),
+        SimpleNamespace(role="user", content="что я спросил?"),
+        SimpleNamespace(role="assistant", content="Какой срок оплаты по договору А?", answer_json={"retrieval_audit": {"performed": False, "passes": ["conversation_history"]}}),
+    ]
+    result = _history_result("last_user", messages)
+    assert result is not None
+    assert result.answer.blocks[0].segments[0].text == "Какой срок оплаты по договору А?"
+
+
+def test_greeting_does_not_require_rag_but_legal_question_does() -> None:
+    from fastapi.testclient import TestClient
+    from backend.app import app, lifespan
+
+    class FakeRouter:
+        config = SimpleNamespace(request_timeout_seconds=330.0)
+
+        def route_question(self, question: str) -> RouteDecision:
+            replies = {"ривет": "Здравствуйте!", "пока": "До свидания!", "хай": "Привет!"}
+            if question in replies:
+                return RouteDecision(route="conversation", answer_style="standard", action="reply", history_target=None, reply=replies[question])
+            return RouteDecision(route="legal", answer_style="brief", action=None, history_target=None, reply=None)
+
+        def __call__(self, payload: str) -> CoreResult:
+            raise CoreUnavailable("RAG is unavailable")
+
+    assert parse_route('{"route":"conversation","answer_style":"standard","action":"reply","history_target":null,"reply":"До свидания!"}').reply == "До свидания!"
+    previous_handler = app.state.core_handler
+    previous_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = lifespan
+    app.state.core_handler = FakeRouter()
+    try:
+        with TestClient(app) as client:
+            login = client.post("/api/v1/auth/login", json={"login": "tester", "password": "test-password"})
+            headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+            conversation = client.post("/api/v1/conversations", json={}, headers=headers)
+            conversation_id = conversation.json()["id"]
+            endpoint = f"/api/v1/conversations/{conversation_id}/messages"
+            for phrase in ("ривет", "пока", "хай"):
+                greeting = client.post(endpoint, json={"content": phrase}, headers=headers)
+                assert greeting.status_code == 201
+                assert greeting.json()["retrieval_audit"] == {"performed": False, "passes": ["conversation_reply"]}
+                assert greeting.json()["sources"] == []
+            legal = client.post(endpoint, json={"content": "Какой срок оплаты?"}, headers=headers)
+            assert legal.status_code == 503
+    finally:
+        app.state.core_handler = previous_handler
+        app.router.lifespan_context = previous_lifespan
+
+
+def test_router_history_uses_saved_question_without_second_retrieval() -> None:
+    from fastapi.testclient import TestClient
+    from backend.app import app, lifespan
+
+    handler, pipeline = _handler()
+    handler.route_question = lambda question: RouteDecision(
+        route="conversation" if question == "Что я спросил?" else "legal",
+        answer_style="standard",
+        action="history" if question == "Что я спросил?" else None,
+        history_target="last_user" if question == "Что я спросил?" else None,
+        reply=None,
+    )
+    previous_handler = app.state.core_handler
+    previous_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = lifespan
+    app.state.core_handler = handler
+    try:
+        with TestClient(app) as client:
+            login = client.post("/api/v1/auth/login", json={"login": "tester", "password": "test-password"})
+            headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+            conversation = client.post("/api/v1/conversations", json={}, headers=headers)
+            endpoint = f"/api/v1/conversations/{conversation.json()['id']}/messages"
+            question = "С кем нужно согласовывать договоры по регламенту?"
+            assert client.post(endpoint, json={"content": question}, headers=headers).status_code == 201
+            first_input = pipeline.input
+            answer = client.post(endpoint, json={"content": "Что я спросил?"}, headers=headers)
+            assert answer.status_code == 201
+            assert answer.json()["blocks"][0]["segments"][0]["text"] == question
+            assert answer.json()["retrieval_audit"]["performed"] is False
+            assert pipeline.input == first_input
+    finally:
+        app.state.core_handler = previous_handler
+        app.router.lifespan_context = previous_lifespan
+
+
+def test_detailed_verified_presentation_has_conclusion_and_explanation() -> None:
+    handler, pipeline = _handler()
+    artifacts = pipeline.last_artifacts
+    artifacts["generation"]["claims"].append({
+        "claim_id": "C002", "text": "Срок начинается с указанного события.", "evidence_ids": ["E001"],
+    })
+    artifacts["verification"]["claim_checks"].append({
+        "claim_id": "C002", "status": "supported", "evidence_ids": ["E001"], "reason": "Подтверждено фрагментом.",
+    })
+    artifacts["verification"]["presentation_blocks"] = [{
+        "block_type": "conclusion",
+        "segments": [
+            {"text": "Оплата производится в течение пяти дней.", "claim_ids": ["C001"], "evidence_ids": ["E001"]},
+            {"text": "Срок начинается с указанного события.", "claim_ids": ["C002"], "evidence_ids": ["E001"]},
+        ],
+    }]
+    request = ModelQuestion.model_validate({
+        "schema_version": "1.0", "request_id": "detailed-layout", "question": "Объясни подробно срок оплаты",
+        "context": {}, "recent_messages": [], "summary": None,
+        "corpus_id": "corpus-test", "index_generation_id": "generation-test", "context_revision": 0,
+        "answer_style": "detailed",
+    })
+    result = handler._to_core_result(request, artifacts)
+    assert [block.block_type for block in result.answer.blocks] == ["conclusion", "justification"]
+    assert len(result.answer.sources) == 1

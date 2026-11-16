@@ -36,6 +36,8 @@ class ModelQuestion(StrictModel):
     corpus_id: str
     index_generation_id: str
     context_revision: int = Field(ge=0)
+    answer_style: Literal["brief", "standard", "detailed"] = "standard"
+    remaining_budget_seconds: float | None = Field(default=None, gt=0)
 
 
 class Citation(StrictModel):

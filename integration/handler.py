@@ -13,7 +13,9 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 import httpx
 
 from backend.schemas import CoreResult, ModelQuestion
+from backend.core_gateway import InvalidCoreOutput
 from integration.config import IntegrationConfig
+from integration.routing import ROUTING_PROMPT, RouteDecision, parse_route
 from submission.model_client import ModelClient
 from submission.budget import RuntimeBudget
 from submission.pipeline import SubmissionPipeline
@@ -45,6 +47,8 @@ class RagHandler:
     ) -> None:
         self.config = config
         self.client = client or ModelClient(timeout=config.model_timeout_seconds)
+        self.router_client = ModelClient(timeout=30.0, temperature=0.3)
+        self._router_lock = threading.Lock()
         self.index = index or HybridIndex.from_prebuilt(
             config.index_dir, config.corpus_path, self.client
         )
@@ -145,6 +149,35 @@ class RagHandler:
             self.ready = False
             self._next_probe_at = monotonic()
 
+    def route_question(self, question: str) -> RouteDecision:
+        if not self._router_lock.acquire(timeout=30.0):
+            raise ModelDependencyError("deepseek", "routing queue timed out")
+        try:
+            self.router_client.budget = RuntimeBudget.start(30.0)
+            try:
+                request = {"question": question}
+                for attempt in range(2):
+                    raw = self.router_client.complete_json(
+                        ROUTING_PROMPT,
+                        json.dumps(request, ensure_ascii=False),
+                        stage="routing" if attempt == 0 else "routing_format_retry",
+                    )
+                    try:
+                        return parse_route(raw)
+                    except ValueError as exc:
+                        if attempt:
+                            raise InvalidCoreOutput("Conversation routing returned an invalid decision") from exc
+                        request = {**request, "format_correction": {"error": str(exc), "previous_response": raw}}
+            finally:
+                self.router_client.budget = None
+        except InvalidCoreOutput:
+            raise
+        except (httpx.HTTPError, RuntimeError, TimeoutError) as exc:
+            LOGGER.warning("conversation_route_failure error_type=%s", type(exc).__name__)
+            raise ModelDependencyError("deepseek", "conversation routing failed") from exc
+        finally:
+            self._router_lock.release()
+
     def __call__(self, payload: str) -> CoreResult:
         if not self._is_ready():
             raise ModelDependencyError("rag", "one or more required model dependencies are unavailable")
@@ -166,7 +199,10 @@ class RagHandler:
             )
             messages.append({"role": "user", "content": f"Контекст: {context_note}\n\n{request.question}"})
             try:
-                budget = RuntimeBudget.start(self.config.request_timeout_seconds)
+                budget = RuntimeBudget.start(min(
+                    self.config.request_timeout_seconds,
+                    request.remaining_budget_seconds or self.config.request_timeout_seconds,
+                ))
                 acquired = self._model_lock.acquire(timeout=budget.remaining())
                 if not acquired:
                     raise TimeoutError("RAG request expired while waiting for the model queue")
@@ -175,7 +211,7 @@ class RagHandler:
                     previous_budget = self.client.budget
                     self.client.budget = budget
                     try:
-                        self.pipeline.run(json.dumps({"messages": messages}, ensure_ascii=False))
+                        self.pipeline.run(json.dumps({"messages": messages, "answer_style": request.answer_style}, ensure_ascii=False))
                         artifacts = deepcopy(self.pipeline.last_artifacts)
                         result = self._to_core_result(request, artifacts)
                     finally:
@@ -194,8 +230,8 @@ class RagHandler:
                 LOGGER.exception("rag_model_failure service=deepseek error_type=%s", type(exc).__name__)
                 raise ModelDependencyError("deepseek", "invalid or unavailable response") from exc
             except ValueError as exc:
-                LOGGER.exception("rag_model_failure service=deepseek error_type=%s", type(exc).__name__)
-                raise ModelDependencyError("deepseek", "invalid model response") from exc
+                LOGGER.exception("rag_invalid_model_output error_type=%s", type(exc).__name__)
+                raise InvalidCoreOutput("RAG returned an invalid verified answer") from exc
             LOGGER.info(
                 "rag_request_complete request_id=%s duration_ms=%.3f sources=%d stages=%s trace=%s",
                 request.request_id,
@@ -295,6 +331,16 @@ class RagHandler:
             item for item in generation.get("claims", [])
             if isinstance(item, dict) and checks.get(item.get("claim_id"), {}).get("status") == "supported"
         ]
+        presented_claim_ids = {
+            str(claim_id)
+            for block in verification.get("presentation_blocks", [])
+            if isinstance(block, dict)
+            for segment in block.get("segments", [])
+            if isinstance(segment, dict)
+            for claim_id in segment.get("claim_ids", [])
+        }
+        if presented_claim_ids:
+            claims = [item for item in claims if str(item.get("claim_id")) in presented_claim_ids]
         used_ids = []
         for claim in claims:
             for evidence_id in claim.get("evidence_ids", []):
@@ -356,6 +402,18 @@ class RagHandler:
                     rendered_segments.append({"claim_id": claim_ids[0], "text": str(presentation["text"]).strip(), "citations": citations})
             if rendered_segments:
                 presentation_blocks.append({"block_type": block.get("block_type", "conclusion"), "segments": rendered_segments})
+        if request.answer_style in {"brief", "standard"} and presentation_blocks:
+            presentation_blocks = [{
+                "block_type": "conclusion",
+                "segments": [segment for block in presentation_blocks for segment in block["segments"]],
+            }]
+        elif request.answer_style == "detailed" and len(presentation_blocks) == 1:
+            segments_for_detail = presentation_blocks[0]["segments"]
+            if len(segments_for_detail) > 1:
+                presentation_blocks = [
+                    {"block_type": "conclusion", "segments": segments_for_detail[:1]},
+                    {"block_type": "justification", "segments": segments_for_detail[1:]},
+                ]
         missing = [str(value) for value in generation.get("missing_facts", [])]
         missing.extend(str(value) for value in verification.get("unanswered_facts", []) if str(value) not in missing)
         if segments and missing:

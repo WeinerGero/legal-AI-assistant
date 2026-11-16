@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from submission.pipeline import (
+    SubmissionPipeline,
     _append_follow_up_question,
     _valid_follow_up_question,
     _align_generation_citations,
@@ -18,6 +21,82 @@ from submission.pipeline import (
     _validate_public_answer,
     _validate_verification,
 )
+
+
+def test_verifier_retries_missing_verdict_and_keeps_claim_validation() -> None:
+    valid = {
+        "verdict": "pass",
+        "claim_checks": [{
+            "claim_id": "C001", "status": "supported", "evidence_ids": ["E001"], "reason": "Пункт подтверждает срок.",
+        }],
+        "fact_checks": [], "unanswered_facts": [], "issues": [], "follow_up_question": None,
+        "presentation_blocks": [{
+            "block_type": "conclusion",
+            "segments": [{"text": "Срок составляет пять дней.", "claim_ids": ["C001"], "evidence_ids": ["E001"]}],
+        }],
+    }
+
+    class Client:
+        budget = None
+        metrics = None
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def complete_json(self, prompt: str, payload: str, *, stage: str) -> str:
+            self.calls.append(stage)
+            if len(self.calls) == 1:
+                return json.dumps({"claim_checks": valid["claim_checks"]}, ensure_ascii=False)
+            assert "format_correction" in json.loads(payload)
+            return json.dumps(valid, ensure_ascii=False)
+
+    pipeline = SubmissionPipeline.__new__(SubmissionPipeline)
+    pipeline.client = Client()
+    pipeline.verification_prompt = "Verify every claim."
+    pipeline._stage_timings = {}
+    result = pipeline._verify(
+        [], {"target_language": "ru", "standalone_question": "Какой срок?", "requested_facts": []},
+        {"answer_type": "answer", "claims": [{"claim_id": "C001", "text": "Срок составляет пять дней.", "evidence_ids": ["E001"]}]},
+        [{"evidence_id": "E001", "text": "Срок составляет пять дней."}],
+    )
+    assert result["verdict"] == "pass"
+    assert pipeline.client.calls == ["verification", "verification_format_retry"]
+
+
+def test_verifier_retries_unusable_presentation_without_dropping_verified_claims() -> None:
+    generation = {"answer_type": "answer", "claims": [{
+        "claim_id": "C001", "text": "Срок составляет пять дней.", "evidence_ids": ["E001"],
+    }]}
+    valid = {
+        "verdict": "pass",
+        "claim_checks": [{"claim_id": "C001", "status": "supported", "evidence_ids": ["E001"], "reason": "Пункт подтверждает срок."}],
+        "fact_checks": [], "unanswered_facts": [], "issues": [], "follow_up_question": None,
+        "presentation_blocks": [{"block_type": "conclusion", "segments": [{
+            "text": "Оплату нужно внести в течение пяти дней.", "claim_ids": ["C001"], "evidence_ids": ["E001"],
+        }]}],
+    }
+
+    class Client:
+        budget = None
+        metrics = None
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete_json(self, prompt: str, payload: str, *, stage: str) -> str:
+            self.calls += 1
+            return json.dumps({**valid, "presentation_blocks": []} if self.calls == 1 else valid, ensure_ascii=False)
+
+    pipeline = SubmissionPipeline.__new__(SubmissionPipeline)
+    pipeline.client = Client()
+    pipeline.verification_prompt = "Verify every claim."
+    pipeline._stage_timings = {}
+    result = pipeline._verify(
+        [], {"target_language": "ru", "standalone_question": "Какой срок?", "requested_facts": []},
+        generation, [{"evidence_id": "E001", "text": "Срок составляет пять дней."}],
+    )
+    assert pipeline.client.calls == 2
+    assert result["presentation_blocks"][0]["segments"][0]["text"] == "Оплату нужно внести в течение пяти дней."
 
 
 def test_presentation_blocks_keep_supported_claims_and_render_connected_text() -> None:

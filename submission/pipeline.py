@@ -47,11 +47,12 @@ class SubmissionPipeline:
         try:
             stage_started = perf_counter()
             messages = parse_conversation(question)
+            answer_style = _answer_style(question)
             self._record_duration("question_parse", stage_started)
             analysis = self._json(
                 self.client.complete_json(
                     self.analysis_prompt,
-                    json.dumps({"messages": messages}, ensure_ascii=False),
+                    json.dumps({"messages": messages, "answer_style": answer_style}, ensure_ascii=False),
                     stage="analysis",
                 )
             )
@@ -105,6 +106,7 @@ class SubmissionPipeline:
             )
             generation_request = {
                 "mode": "initial",
+                "answer_style": answer_style,
                 "conversation": messages,
                 "target_language": analysis["target_language"],
                 "question": standalone,
@@ -114,7 +116,8 @@ class SubmissionPipeline:
             }
             generation = self._generate(generation_request, evidence)
             verification = self._verify(
-                messages, analysis, generation, evidence, fact_requirements=fact_requirements
+                messages, analysis, generation, evidence, fact_requirements=fact_requirements,
+                answer_style=answer_style,
             )
             revised = verification["verdict"] != "pass"
             revision_allowed = (
@@ -150,6 +153,7 @@ class SubmissionPipeline:
                     generation,
                     evidence,
                     fact_requirements=fact_requirements,
+                    answer_style=answer_style,
                     stage="reverification",
                 )
                 if self.client.metrics is not None:
@@ -249,10 +253,11 @@ class SubmissionPipeline:
                 reserve_seconds=RECOVERY_MIN_REMAINING_SECONDS,
             )
         messages = parse_conversation(question)
+        answer_style = _answer_style(question)
         analysis = self._json(
             self.client.complete_json(
                 self.analysis_prompt,
-                json.dumps({"messages": messages}, ensure_ascii=False),
+                json.dumps({"messages": messages, "answer_style": answer_style}, ensure_ascii=False),
                 stage="analysis_recovery",
             )
         )
@@ -280,6 +285,7 @@ class SubmissionPipeline:
         generation = self._generate(
             {
                 "mode": "recovery",
+                "answer_style": answer_style,
                 "conversation": messages,
                 "target_language": target_language,
                 "question": analysis["standalone_question"],
@@ -289,7 +295,7 @@ class SubmissionPipeline:
             },
             evidence,
         )
-        verification = self._verify(messages, analysis, generation, evidence, fact_requirements=fact_requirements)
+        verification = self._verify(messages, analysis, generation, evidence, fact_requirements=fact_requirements, answer_style=answer_style)
         if verification["verdict"] == "pass":
             result = _render_citations(
                 generation,
@@ -386,30 +392,50 @@ class SubmissionPipeline:
         evidence: list[dict],
         *,
         fact_requirements: list[dict] | None = None,
+        answer_style: str = "standard",
         stage: str = "verification",
     ) -> dict:
         started = perf_counter()
-        verification = self._json(
-            self.client.complete_json(
+        request = {
+            "messages": messages,
+            "answer_style": answer_style,
+            "target_language": analysis["target_language"],
+            "standalone_question": analysis["standalone_question"],
+            "requested_facts": analysis["requested_facts"],
+            "fact_requirements": fact_requirements or [],
+            "generation": generation,
+            "evidence": evidence,
+        }
+        fallback_verification = None
+        for attempt in range(2):
+            raw = self.client.complete_json(
                 self.verification_prompt,
-                json.dumps(
-                    {
-                        "messages": messages,
-                        "target_language": analysis["target_language"],
-                        "standalone_question": analysis["standalone_question"],
-                        "requested_facts": analysis["requested_facts"],
-                        "fact_requirements": fact_requirements or [],
-                        "generation": generation,
-                        "evidence": evidence,
-                    },
-                    ensure_ascii=False,
-                ),
-                stage=stage,
+                json.dumps(request, ensure_ascii=False),
+                stage=stage if attempt == 0 else f"{stage}_format_retry",
             )
-        )
-        _normalize_verification(verification, generation, fact_requirements or [])
-        _validate_verification(verification, generation, evidence, fact_requirements or [])
-        _normalize_presentation_blocks(verification, generation, evidence)
+            try:
+                verification = self._json(raw)
+                _normalize_verification(verification, generation, fact_requirements or [])
+                _validate_verification(verification, generation, evidence, fact_requirements or [])
+                supplied_presentation = verification.get("presentation_blocks") is not None
+                presentation_valid = _normalize_presentation_blocks(verification, generation, evidence)
+                if not presentation_valid and supplied_presentation and attempt == 0 and generation.get("claims") and (
+                    self.client.budget is None or self.client.budget.remaining() >= 15
+                ):
+                    fallback_verification = verification
+                    request = {**request, "format_correction": {
+                        "error": "presentation_blocks did not preserve unique supported claims and exact evidence IDs; rewrite as connected prose without repetition or unrelated details",
+                        "previous_response": raw,
+                    }}
+                    continue
+                break
+            except ValueError as exc:
+                if fallback_verification is not None:
+                    verification = fallback_verification
+                    break
+                if attempt or (self.client.budget is not None and self.client.budget.remaining() < 15):
+                    raise
+                request = {**request, "format_correction": {"error": str(exc), "previous_response": raw}}
         self._record_duration(stage, started)
         checks = verification["claim_checks"]
         self._record_quality(
@@ -566,6 +592,15 @@ class SubmissionPipeline:
         if not isinstance(data, dict):
             raise ValueError("модель вернула JSON не в виде объекта")
         return data
+
+
+def _answer_style(raw: str) -> str:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return "standard"
+    style = parsed.get("answer_style") if isinstance(parsed, dict) else None
+    return style if style in {"brief", "standard", "detailed"} else "standard"
 
 
 def parse_conversation(raw: str) -> list[dict[str, str]]:
@@ -928,7 +963,7 @@ def _append_follow_up_question(
     return answer + suffix if len(answer) + len(suffix) <= MAX_RENDERED_ANSWER_CHARS else answer
 
 
-def _normalize_presentation_blocks(verification: dict, generation: dict, evidence: list[dict]) -> None:
+def _normalize_presentation_blocks(verification: dict, generation: dict, evidence: list[dict]) -> bool:
     claims = {item["claim_id"]: item for item in generation.get("claims", []) if isinstance(item, dict)}
     supported = {
         item.get("claim_id") for item in verification.get("claim_checks", [])
@@ -974,6 +1009,7 @@ def _normalize_presentation_blocks(verification: dict, generation: dict, evidenc
                 break
             if segments:
                 normalized.append({"block_type": block["block_type"], "segments": segments})
+    valid_presentation = bool(normalized)
     if not normalized:
         normalized = [{
             "block_type": "conclusion",
@@ -985,6 +1021,7 @@ def _normalize_presentation_blocks(verification: dict, generation: dict, evidenc
         }]
         normalized = [block for block in normalized if block["segments"]]
     verification["presentation_blocks"] = normalized
+    return valid_presentation
 
 
 def _render_presentation_blocks(
