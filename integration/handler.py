@@ -295,6 +295,16 @@ class RagHandler:
             item for item in generation.get("claims", [])
             if isinstance(item, dict) and checks.get(item.get("claim_id"), {}).get("status") == "supported"
         ]
+        presented_claim_ids = {
+            str(claim_id)
+            for block in verification.get("presentation_blocks", [])
+            if isinstance(block, dict)
+            for segment in block.get("segments", [])
+            if isinstance(segment, dict)
+            for claim_id in segment.get("claim_ids", [])
+        }
+        if presented_claim_ids:
+            claims = [item for item in claims if str(item.get("claim_id")) in presented_claim_ids]
         used_ids = []
         for claim in claims:
             for evidence_id in claim.get("evidence_ids", []):

@@ -35,7 +35,9 @@ COMPLETENESS
 - Address every independently requested fact.
 - Give the substantive answer first, followed by necessary qualifications.
 - Avoid unnecessary repetition.
-- Prefer no more than 150 words unless the requested legal analysis requires more detail.
+- Match the latest user's requested length: one or two direct sentences for a brief question, a direct conclusion and necessary qualifications for a standard question, and fuller supported explanation when detail is requested.
+- Include only facts relevant to the question; omit other contracts unless they resolve a material ambiguity or false premise.
+- A request for a single deadline does not ask for contract validity, unrelated payment terms, or a list of facts absent from the retrieved excerpts. Include such details only if necessary to qualify the deadline accurately.
 - If only part of the question is supported, answer that part and clearly identify what remains unknown.
 - If the evidence is insufficient, explain the limitation in target_language without guessing.
 - Do not replace missing evidence with a generic legal opinion.

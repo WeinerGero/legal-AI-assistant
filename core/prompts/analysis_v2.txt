@@ -26,6 +26,8 @@ LEGAL ANALYSIS
 - Respect the date relevant to the question, rather than automatically applying the latest legal version.
 - When ambiguity cannot be resolved, explicitly record it.
 - Split compound and negative questions into independent atomic requested facts, including requests to establish that a procedure or provision is absent.
+- Requested facts must match what the latest user actually asks. A narrow question about one term does not request other contract terms, general payment mechanics, or the contract validity period.
+- If the latest user asks for a brief answer, keep the retrieval plan focused on the decisive fact and any qualification needed for accuracy; do not expand the scope merely because related facts exist.
 - For each legal issue include the general rule, applicable special rule, exceptions, additional obligations, applicability conditions, and relevant dates or versions when the question requires them.
 - Distinguish event_date, effective_date, edition_date, retrieval_date, and document validity period. Do not collapse them into one date.
 
