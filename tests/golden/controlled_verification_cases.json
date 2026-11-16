@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "methodology": "Deterministic structural verifier controls; no language model and no legal-answer scoring.",
+  "cases": [
+    {"id": "supported", "claim_status": "supported", "fact_status": "addressed", "verdict": "pass"},
+    {"id": "wrong_amount", "claim_status": "contradicted", "fact_status": "addressed", "verdict": "revision_required"},
+    {"id": "wrong_date", "claim_status": "unsupported", "fact_status": "addressed", "verdict": "revision_required"},
+    {"id": "wrong_version", "claim_status": "partially_supported", "fact_status": "addressed", "verdict": "revision_required"},
+    {"id": "missing_fact", "claim_status": "supported", "fact_status": "missing", "verdict": "revision_required"},
+    {"id": "reordered_evidence", "claim_status": "supported", "fact_status": "addressed", "verdict": "pass", "evidence_order": ["E002", "E001"]},
+    {"id": "missing_verdict", "claim_status": "supported", "fact_status": "addressed", "verdict": "pass", "omit_verdict": true},
+    {"id": "incomplete_claim_check", "claim_status": "supported", "fact_status": "addressed", "verdict": "revision_required", "omit_claim_check": true}
+  ]
+}

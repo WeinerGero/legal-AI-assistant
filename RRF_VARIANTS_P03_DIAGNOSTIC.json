@@ -1,0 +1,75 @@
+{
+  "methodology": "Replay of saved flattened BM25/FAISS rankings; exact per-query channel lists were not persisted in P03, so this is diagnostic and not a replacement for live RRF metrics.",
+  "rows": [
+    {
+      "variant": "FAISS-only",
+      "k": 8,
+      "fragment_recall": 0.6666666666666667,
+      "ndcg": 0.6196262534356036,
+      "required_evidence_coverage": 0.75
+    },
+    {
+      "variant": "FAISS-only",
+      "k": 24,
+      "fragment_recall": 0.7333333333333333,
+      "ndcg": 0.6467566481220931,
+      "required_evidence_coverage": 0.875
+    },
+    {
+      "variant": "RRF-0.5/0.5",
+      "k": 8,
+      "fragment_recall": 0.5666666666666667,
+      "ndcg": 0.5907753734051793,
+      "required_evidence_coverage": 0.625
+    },
+    {
+      "variant": "RRF-0.5/0.5",
+      "k": 24,
+      "fragment_recall": 0.6666666666666667,
+      "ndcg": 0.6221633622807652,
+      "required_evidence_coverage": 0.75
+    },
+    {
+      "variant": "RRF-0.25/0.75",
+      "k": 8,
+      "fragment_recall": 0.5666666666666667,
+      "ndcg": 0.5668099039148352,
+      "required_evidence_coverage": 0.625
+    },
+    {
+      "variant": "RRF-0.25/0.75",
+      "k": 24,
+      "fragment_recall": 0.7333333333333333,
+      "ndcg": 0.6239357779208036,
+      "required_evidence_coverage": 0.875
+    },
+    {
+      "variant": "RRF-0.1/0.9",
+      "k": 8,
+      "fragment_recall": 0.6666666666666667,
+      "ndcg": 0.608155294375951,
+      "required_evidence_coverage": 0.75
+    },
+    {
+      "variant": "RRF-0.1/0.9",
+      "k": 24,
+      "fragment_recall": 0.7333333333333333,
+      "ndcg": 0.6316192306770887,
+      "required_evidence_coverage": 0.875
+    },
+    {
+      "variant": "Diverse",
+      "k": 8,
+      "fragment_recall": 0.6666666666666667,
+      "ndcg": 0.5695464533695846,
+      "required_evidence_coverage": 0.75
+    },
+    {
+      "variant": "Diverse",
+      "k": 24,
+      "fragment_recall": 0.7333333333333333,
+      "ndcg": 0.5920542311286782,
+      "required_evidence_coverage": 0.875
+    }
+  ]
+}
