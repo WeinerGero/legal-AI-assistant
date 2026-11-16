@@ -83,7 +83,7 @@ class RuntimeConfig:
             top_k=max(8, min(40, _env_int("TOP_K", 24))),
             reranker_top_n=max(8, min(10, _env_int("RERANKER_TOP_N", 2) * 4)),
             max_tokens=max(512, min(4096, _env_int("MAX_TOKENS", 1536))),
-            temperature=_env_float("TEMPERATURE", 0.3),
+            temperature=0.3,
             max_workers=max(1, min(4, _env_int("MAX_WORKERS", 4))),
             time_limit_seconds=max(
                 0.1,
