@@ -1,0 +1,119 @@
+{
+  "schema_version": "1.0",
+  "provenance": "Hand-built contract fixtures. Outputs are simulated expected verifier responses, not model measurements.",
+  "cases": [
+    {
+      "id": "supported_answer",
+      "description": "Correct amount and clause from the applicable contract.",
+      "input": {
+        "target_language": "ru",
+        "standalone_question": "Какова арендная плата по договору А-08/2024?",
+        "requested_facts": ["Размер арендной платы"],
+        "generation": {
+          "answer_type": "answer",
+          "answer": "Арендная плата составляет 450 000 рублей [E001].",
+          "claims": [{"claim_id": "C001", "text": "Арендная плата составляет 450 000 рублей.", "evidence_ids": ["E001"]}],
+          "missing_facts": []
+        },
+        "evidence": [{"evidence_id": "E001", "document": "Договор аренды А-08-2024", "section": "3.1", "dates": ["2024-03-01"], "text": "Арендная плата составляет 450 000 рублей в месяц."}]
+      },
+      "expected_output": {
+        "verdict": "pass",
+        "claim_checks": [{"claim_id": "C001", "status": "supported", "evidence_ids": ["E001"], "reason": "Пункт 3.1 договора прямо устанавливает арендную плату 450 000 рублей."}],
+        "unanswered_facts": [],
+        "issues": []
+      }
+    },
+    {
+      "id": "wrong_revision",
+      "description": "A later regulation is incorrectly applied to an earlier event date.",
+      "input": {
+        "target_language": "ru",
+        "standalone_question": "Кто согласовывал договор 15 февраля 2024 года?",
+        "requested_facts": ["Применимая редакция", "Согласующее лицо"],
+        "generation": {
+          "answer_type": "answer",
+          "answer": "Применяется редакция 2025 года, согласование выполняет руководитель подразделения [E003].",
+          "claims": [{"claim_id": "C001", "text": "К событию 15 февраля 2024 года применяется редакция 2025 года.", "evidence_ids": ["E003"]}],
+          "missing_facts": []
+        },
+        "evidence": [
+          {"evidence_id": "E002", "document": "Регламент ред. 2023", "section": "1.1", "dates": ["2023-01-10"], "text": "Редакция действует с 10 января 2023 года."},
+          {"evidence_id": "E003", "document": "Регламент ред. 2025", "section": "1.1", "dates": ["2025-03-01"], "text": "Редакция действует с 1 марта 2025 года."}
+        ]
+      },
+      "expected_output": {
+        "verdict": "revision_required",
+        "claim_checks": [{"claim_id": "C001", "status": "contradicted", "evidence_ids": ["E003"], "reason": "Редакция 2025 года действует только с 1 марта 2025 года и не применима к событию 15 февраля 2024 года."}],
+        "unanswered_facts": ["Согласующее лицо по применимой редакции"],
+        "issues": ["Использована неверная редакция документа."]
+      }
+    },
+    {
+      "id": "partial_support",
+      "description": "Amount is established but the claimed payment deadline is absent.",
+      "input": {
+        "target_language": "ru",
+        "standalone_question": "Каковы сумма и срок оплаты?",
+        "requested_facts": ["Сумма", "Срок оплаты"],
+        "generation": {
+          "answer_type": "answer",
+          "answer": "Сумма составляет 450 000 рублей, оплата производится до 1-го числа [E001].",
+          "claims": [{"claim_id": "C001", "text": "Сумма составляет 450 000 рублей, оплата производится до 1-го числа.", "evidence_ids": ["E001"]}],
+          "missing_facts": []
+        },
+        "evidence": [{"evidence_id": "E001", "document": "Договор аренды А-08-2024", "section": "3.1", "dates": ["2024-03-01"], "text": "Арендная плата составляет 450 000 рублей в месяц."}]
+      },
+      "expected_output": {
+        "verdict": "revision_required",
+        "claim_checks": [{"claim_id": "C001", "status": "partially_supported", "evidence_ids": ["E001"], "reason": "Доказательство подтверждает сумму, но не содержит срока оплаты до 1-го числа."}],
+        "unanswered_facts": ["Срок оплаты"],
+        "issues": ["Одна атомарная проверка содержит подтверждённую сумму и неподтверждённый срок."]
+      }
+    },
+    {
+      "id": "false_citation",
+      "description": "Existing evidence ID points to an unrelated provision.",
+      "input": {
+        "target_language": "ru",
+        "standalone_question": "Каков срок поставки?",
+        "requested_facts": ["Срок поставки"],
+        "generation": {
+          "answer_type": "answer",
+          "answer": "Поставка выполняется за 10 рабочих дней [E002].",
+          "claims": [{"claim_id": "C001", "text": "Поставка выполняется за 10 рабочих дней.", "evidence_ids": ["E002"]}],
+          "missing_facts": []
+        },
+        "evidence": [{"evidence_id": "E002", "document": "Договор поставки П-17-2024", "section": "8.1", "dates": ["2024-01-01"], "text": "Стороны обмениваются уведомлениями по электронной почте."}]
+      },
+      "expected_output": {
+        "verdict": "revision_required",
+        "claim_checks": [{"claim_id": "C001", "status": "unsupported", "evidence_ids": ["E002"], "reason": "Пункт 8.1 регулирует уведомления и не устанавливает срок поставки."}],
+        "unanswered_facts": ["Срок поставки"],
+        "issues": ["Ссылка существует, но не подтверждает утверждение."]
+      }
+    },
+    {
+      "id": "justified_refusal",
+      "description": "No supplied evidence addresses the requested fact.",
+      "input": {
+        "target_language": "ru",
+        "standalone_question": "Какова ставка налога?",
+        "requested_facts": ["Ставка налога"],
+        "generation": {
+          "answer_type": "insufficient_evidence",
+          "answer": "В предоставленных документах недостаточно данных для определения ставки налога.",
+          "claims": [],
+          "missing_facts": ["Ставка налога"]
+        },
+        "evidence": []
+      },
+      "expected_output": {
+        "verdict": "pass",
+        "claim_checks": [],
+        "unanswered_facts": [],
+        "issues": []
+      }
+    }
+  ]
+}

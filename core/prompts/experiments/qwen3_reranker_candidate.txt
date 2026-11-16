@@ -1,0 +1,7 @@
+Rank Russian legal and contractual passages by their ability to establish the facts requested in the query.
+
+Prioritize exact counterparty names, contract identifiers, applicable document versions, event dates, legal obligations, amounts, deadlines and clause references.
+
+Prefer passages that directly establish the answer. Penalize passages about similarly named counterparties, irrelevant contract versions and merely related topics.
+
+Do not use external knowledge.

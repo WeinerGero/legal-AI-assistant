@@ -142,6 +142,7 @@ class Evidence(BaseModel):
     document_version_id: UUID
     clause_id: UUID
     document_title: str
+    version_label: str = ""
     section: str
     text: str
     applicability_note: str | None = None
@@ -295,6 +296,8 @@ class RenderedAnswerV1(BaseModel):
     verification_status: Literal["passed", "partial", "failed", "technical_error"]
     blocks: list[RenderedBlock] = Field(default_factory=list)
     sources: list[RenderedSource] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    clarification_question: str | None = None
 
 
 class TechnicalFailure(BaseModel):
@@ -322,6 +325,17 @@ class DocumentRef(BaseModel):
     canonical_text: str
 
 
+class ClauseRange(BaseModel):
+    """Точные границы одного юридического пункта в каноническом документе."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    clause_id: UUID
+    start_char: int
+    end_char: int
+    section: str = ""
+
+
 class ChunkRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -331,6 +345,7 @@ class ChunkRef(BaseModel):
     end_char: int
     search_text: str
     clause_ids: tuple[UUID, ...] = ()
+    clause_ranges: tuple[ClauseRange, ...] = ()
 
 
 @runtime_checkable

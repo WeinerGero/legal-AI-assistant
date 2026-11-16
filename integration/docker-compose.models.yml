@@ -1,0 +1,42 @@
+services:
+  bge-m3:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    command: ["--model-id", "BAAI/bge-m3", "--port", "80", "--max-client-batch-size", "8"]
+    volumes:
+      - bge_m3_cache:/data
+    networks: [default]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  qwen3-reranker:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    command: ["--hf-repo", "tensorblock/Qwen_Qwen3-Reranker-4B-GGUF", "--hf-file", "Qwen3-Reranker-4B-Q3_K_M.gguf", "--embedding", "--pooling", "rank", "--ctx-size", "8192", "--parallel", "1", "--ubatch-size", "4096", "--host", "0.0.0.0", "--port", "8080"]
+    volumes:
+      - qwen3_cache:/root/.cache
+    networks: [default]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  api:
+    environment:
+      EMBEDDER_BASE_URL: http://bge-m3/v1
+      RERANKER_BASE_URL: http://qwen3-reranker:8080/v1
+      RAG_TOP_K: "30"
+      RAG_EVIDENCE_K: "10"
+    depends_on:
+      bge-m3:
+        condition: service_healthy
+      qwen3-reranker:
+        condition: service_healthy
+
+volumes:
+  bge_m3_cache:
+  qwen3_cache:

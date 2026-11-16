@@ -1,0 +1,205 @@
+﻿{
+    "schema_version":  1,
+    "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+    "case_count":  65,
+    "partition_size":  5,
+    "partition_count":  13,
+    "strategy":  "original-order modulo 13",
+    "partitions":  [
+                       {
+                           "partition_id":  "P01",
+                           "case_ids":  [
+                                            "H1",
+                                            "D7",
+                                            "R3",
+                                            "C1",
+                                            "Calc3"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  1,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P02",
+                           "case_ids":  [
+                                            "H2",
+                                            "P1",
+                                            "R4",
+                                            "C2",
+                                            "Fx1"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  2,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P03",
+                           "case_ids":  [
+                                            "H3",
+                                            "P2",
+                                            "R5",
+                                            "C3",
+                                            "Fx2"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  3,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P04",
+                           "case_ids":  [
+                                            "H4",
+                                            "P3",
+                                            "S1",
+                                            "C4",
+                                            "Fx3"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  4,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P05",
+                           "case_ids":  [
+                                            "I1",
+                                            "P4",
+                                            "S2",
+                                            "St1",
+                                            "Pf1"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  5,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P06",
+                           "case_ids":  [
+                                            "I2",
+                                            "P5",
+                                            "S3",
+                                            "St2",
+                                            "Pf2"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  6,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P07",
+                           "case_ids":  [
+                                            "I3",
+                                            "P6",
+                                            "Pr1",
+                                            "Ln1",
+                                            "Pf3"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  7,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P08",
+                           "case_ids":  [
+                                            "D1",
+                                            "P7",
+                                            "Pr2",
+                                            "Ln2",
+                                            "Sty1"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  8,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P09",
+                           "case_ids":  [
+                                            "D2",
+                                            "L1",
+                                            "Pr3",
+                                            "Ln3",
+                                            "Sty2"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  9,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P10",
+                           "case_ids":  [
+                                            "D3",
+                                            "L2",
+                                            "O1",
+                                            "Lg1",
+                                            "M1"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  10,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P11",
+                           "case_ids":  [
+                                            "D4",
+                                            "L3",
+                                            "O2",
+                                            "Lg2",
+                                            "E1"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  11,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P12",
+                           "case_ids":  [
+                                            "D5",
+                                            "R1",
+                                            "U1",
+                                            "Calc1",
+                                            "E2"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  12,
+                           "case_count":  65,
+                           "status":  "planned"
+                       },
+                       {
+                           "partition_id":  "P13",
+                           "case_ids":  [
+                                            "D6",
+                                            "R2",
+                                            "U2",
+                                            "Calc2",
+                                            "E3"
+                                        ],
+                           "dataset_sha256":  "dc4143f78f9978217135e66208e94102fed90e2b6ef858cd2d6f3a8ed062da13",
+                           "partition_size":  5,
+                           "partition_order":  13,
+                           "case_count":  65,
+                           "status":  "planned"
+                       }
+                   ]
+}
