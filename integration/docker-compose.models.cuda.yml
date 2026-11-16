@@ -1,0 +1,21 @@
+services:
+  bge-m3:
+    image: ghcr.io/huggingface/text-embeddings-inference:1.8
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  qwen3-reranker:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: ["--hf-repo", "tensorblock/Qwen_Qwen3-Reranker-4B-GGUF", "--hf-file", "Qwen3-Reranker-4B-Q3_K_M.gguf", "--embedding", "--pooling", "rank", "--ctx-size", "8192", "--parallel", "1", "--ubatch-size", "4096", "--n-gpu-layers", "99", "--host", "0.0.0.0", "--port", "8080"]
