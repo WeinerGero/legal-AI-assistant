@@ -235,6 +235,19 @@ def _recalculate_partition_run(manifest: dict[str, Any], cases: list[dict[str, A
         "run_dir": str(run_root),
     }
     state["codex_evaluations"] = {"cases": {}, "partitions": []}
+    _atomic_csv(run_root / "all_answers.csv", ["id", "answer"], sorted(rows, key=lambda row: str(row["id"])))
+    partition_quality = [
+        _read_json(run_root / "partitions" / part["partition_id"] / "quality_metrics.json", {})
+        for part in manifest["partitions"]
+    ]
+    quality_payload = {
+        "partitions": len(partition_quality),
+        "questions": len(rows),
+        "quality_complete_partitions": sum(row.get("status") == "complete" for row in partition_quality),
+        "quality_incomplete_partitions": [index + 1 for index, row in enumerate(partition_quality) if row.get("status") == "quality_incomplete"],
+    }
+    _atomic_json(run_root / "quality_metrics.json", quality_payload)
+    _atomic_text(run_root / "quality_metrics.md", "# Run quality metrics\n\n" + f"- Questions: {len(rows)}\n- Complete partitions: {quality_payload['quality_complete_partitions']}/13\n- Incomplete partitions: {quality_payload['quality_incomplete_partitions'] or 'none'}\n")
     _write_outputs(cases, rows, events, state)
 
 
