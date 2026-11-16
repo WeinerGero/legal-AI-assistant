@@ -102,7 +102,7 @@ def _handler() -> tuple[RagHandler, FakePipeline]:
     handler._slots = threading.BoundedSemaphore(2)
     handler._model_lock = threading.BoundedSemaphore(1)
     handler.ready = True
-    handler.route_question = lambda question: RouteDecision(
+    handler.route_question = lambda question, history: RouteDecision(
         route="legal", answer_style="standard", action=None, history_target=None, reply=None
     )
     return handler, pipeline
@@ -333,7 +333,7 @@ def test_greeting_does_not_require_rag_but_legal_question_does() -> None:
     class FakeRouter:
         config = SimpleNamespace(request_timeout_seconds=330.0)
 
-        def route_question(self, question: str) -> RouteDecision:
+        def route_question(self, question: str, history: list[dict[str, str]]) -> RouteDecision:
             replies = {"ривет": "Здравствуйте!", "пока": "До свидания!", "хай": "Привет!"}
             if question in replies:
                 return RouteDecision(route="conversation", answer_style="standard", action="reply", history_target=None, reply=replies[question])
@@ -371,7 +371,7 @@ def test_router_history_uses_saved_question_without_second_retrieval() -> None:
     from backend.app import app, lifespan
 
     handler, pipeline = _handler()
-    handler.route_question = lambda question: RouteDecision(
+    handler.route_question = lambda question, history: RouteDecision(
         route="conversation" if question == "Что я спросил?" else "legal",
         answer_style="standard",
         action="history" if question == "Что я спросил?" else None,
@@ -399,6 +399,74 @@ def test_router_history_uses_saved_question_without_second_retrieval() -> None:
     finally:
         app.state.core_handler = previous_handler
         app.router.lifespan_context = previous_lifespan
+
+
+def test_router_receives_current_dialogue_and_user_corrections_after_reload() -> None:
+    from fastapi.testclient import TestClient
+    from backend.app import app, lifespan
+
+    class FakeRouter:
+        config = SimpleNamespace(request_timeout_seconds=330.0)
+
+        def route_question(self, question: str, history: list[dict[str, str]]) -> RouteDecision:
+            if question == "Сколько мне лет?":
+                facts = [item["content"] for item in history if item["role"] == "user" and item["content"].startswith("Мне ")]
+                reply = facts[-1].replace("Мне ", "Вам ") if facts else "Возраст не указан."
+            else:
+                reply = "Понял."
+            return RouteDecision(route="conversation", answer_style="standard", action="reply", history_target=None, reply=reply)
+
+    previous_handler = app.state.core_handler
+    previous_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = lifespan
+    app.state.core_handler = FakeRouter()
+    try:
+        with TestClient(app) as client:
+            login = client.post("/api/v1/auth/login", json={"login": "tester", "password": "test-password"})
+            headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+            first = client.post("/api/v1/conversations", json={}, headers=headers).json()["id"]
+            second = client.post("/api/v1/conversations", json={}, headers=headers).json()["id"]
+
+            def ask(conversation_id: str, content: str) -> str:
+                response = client.post(
+                    f"/api/v1/conversations/{conversation_id}/messages",
+                    json={"content": content}, headers=headers,
+                )
+                assert response.status_code == 201
+                return response.json()["blocks"][0]["segments"][0]["text"]
+
+            ask(first, "Мне 23 года.")
+            assert ask(first, "Сколько мне лет?") == "Вам 23 года."
+            ask(first, "Мне 24 года.")
+            assert ask(first, "Сколько мне лет?") == "Вам 24 года."
+            ask(second, "Мне 41 год.")
+            assert ask(second, "Сколько мне лет?") == "Вам 41 год."
+            assert len(client.get(f"/api/v1/conversations/{first}/messages", headers=headers).json()) == 8
+    finally:
+        app.state.core_handler = previous_handler
+        app.router.lifespan_context = previous_lifespan
+
+
+def test_model_router_receives_entire_prior_history_without_current_question() -> None:
+    class RouterClient:
+        budget = None
+
+        def complete_json(self, prompt: str, payload: str, *, stage: str) -> str:
+            self.payload = json.loads(payload)
+            return json.dumps({
+                "route": "conversation", "answer_style": "standard", "action": "reply",
+                "history_target": None, "reply": "Вам 23 года.",
+            }, ensure_ascii=False)
+
+    handler = RagHandler.__new__(RagHandler)
+    handler.router_client = RouterClient()
+    handler._router_lock = threading.Lock()
+    history = [{"role": "user", "content": f"Сообщение {number}"} for number in range(32)]
+    history.append({"role": "user", "content": "Мне 23 года."})
+    decision = handler.route_question("Сколько мне лет?", history)
+    assert decision.reply == "Вам 23 года."
+    assert handler.router_client.payload["history"] == history
+    assert all(item["content"] != "Сколько мне лет?" for item in handler.router_client.payload["history"])
 
 
 def test_detailed_verified_presentation_has_conclusion_and_explanation() -> None:

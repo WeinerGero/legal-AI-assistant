@@ -718,7 +718,8 @@ def send_message(
     index_generation_id = os.getenv("INDEX_GENERATION_ID", "").strip()
     route_started = monotonic()
     route_fn = getattr(core_handler, "route_question", None)
-    route = route_fn(payload.content) if callable(route_fn) else None
+    history = [{"role": item.role, "content": item.content} for item in reversed(recent)]
+    route = route_fn(payload.content, history) if callable(route_fn) else None
     if route is not None and route.route == "conversation":
         if route.action == "history":
             conversation_result = _history_result(route.history_target, list(reversed(recent)))
@@ -744,7 +745,7 @@ def send_message(
         question=payload.content,
         context=model_context,
         recent_messages=[
-            RecentMessage(role=item.role, content=item.content) for item in reversed(recent)
+            RecentMessage(**item) for item in history
         ],
         summary=context_data.get("summary"),
         corpus_id=corpus_id,
