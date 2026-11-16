@@ -48,8 +48,18 @@ class InputModel(BaseModel):
 
 
 class LoginInput(InputModel):
-    login: str = Field(min_length=1, max_length=128)
-    password: str = Field(min_length=1, max_length=256)
+    login: str = Field(
+        min_length=1,
+        max_length=128,
+        description="Логин пользователя.",
+        examples=["user@example.com"],
+    )
+    password: str = Field(
+        min_length=1,
+        max_length=256,
+        description="Пароль пользователя.",
+        examples=["<set-me>"],
+    )
 
     @field_validator("login")
     @classmethod
@@ -61,7 +71,13 @@ class LoginInput(InputModel):
 
 
 class ConversationInput(InputModel):
-    title: str = Field(default="Новый диалог", min_length=1, max_length=200)
+    title: str = Field(
+        default="Новый диалог",
+        min_length=1,
+        max_length=200,
+        description="Название нового диалога.",
+        examples=["Вопрос по договору"],
+    )
 
     @field_validator("title")
     @classmethod
@@ -73,7 +89,12 @@ class ConversationInput(InputModel):
 
 
 class ConversationUpdate(InputModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Новое название диалога.",
+        examples=["Обновлённое название"],
+    )
 
     @field_validator("title")
     @classmethod
@@ -85,8 +106,19 @@ class ConversationUpdate(InputModel):
 
 
 class MessageInput(InputModel):
-    content: str = Field(min_length=1, max_length=20_000)
-    context: QuestionContext | None = None
+    content: str = Field(
+        min_length=1,
+        max_length=20_000,
+        description="Текст вопроса.",
+        examples=["Какие условия расторжения предусмотрены договором?"],
+    )
+    context: QuestionContext | None = Field(
+        default=None,
+        description=(
+            "Необязательный контекст вопроса, например активный документ "
+            "или дата события."
+        ),
+    )
 
     @field_validator("content")
     @classmethod
@@ -97,12 +129,46 @@ class MessageInput(InputModel):
         return value
 
 
+class HealthOutput(BaseModel):
+    status: str = Field(description="Состояние сервиса.")
+
+
+class UserOutput(BaseModel):
+    id: UUID = Field(description="Идентификатор пользователя.")
+    login: str = Field(description="Логин пользователя.")
+    role: str = Field(description="Роль пользователя.")
+
+
+class LoginOutput(BaseModel):
+    access_token: str = Field(description="Токен авторизации.")
+    token_type: Literal["bearer"] = Field(description="Тип токена авторизации.")
+    expires_in: int = Field(description="Срок действия токена в секундах.")
+    user: UserOutput = Field(description="Данные вошедшего пользователя.")
+
+
+class ProfileOutput(BaseModel):
+    id: UUID = Field(description="Идентификатор пользователя.")
+    login: str = Field(description="Логин пользователя.")
+    role: str = Field(description="Роль пользователя.")
+
+
+class ConversationOutput(BaseModel):
+    id: UUID = Field(description="Идентификатор диалога.")
+    title: str = Field(description="Название диалога.")
+    created_at: datetime = Field(description="Время создания диалога.")
+    updated_at: datetime = Field(description="Время последнего изменения диалога.")
+
+
 class MessageOutput(BaseModel):
-    id: UUID
-    role: Literal["user", "assistant"]
-    content: str
-    answer: AnswerResponse | None
-    created_at: datetime
+    id: UUID = Field(description="Идентификатор сообщения.")
+    role: Literal["user", "assistant"] = Field(
+        description="Автор сообщения: пользователь или ассистент."
+    )
+    content: str = Field(description="Текст сообщения.")
+    answer: AnswerResponse | None = Field(
+        description="Структурированный ответ ассистента, если он есть."
+    )
+    created_at: datetime = Field(description="Время создания сообщения.")
 
 
 def _hash_password(password: str) -> str:
@@ -159,7 +225,22 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Legal Assistant API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="Legal Assistant API",
+    description=(
+        "API юридического ассистента: авторизация, управление диалогами "
+        "и получение ответов с источниками."
+    ),
+    version="1.0.0",
+    openapi_tags=[
+        {"name": "Health", "description": "Проверка доступности API и базы данных."},
+        {"name": "Auth", "description": "Вход, выход и профиль пользователя."},
+        {"name": "Conversations", "description": "Создание и управление диалогами."},
+        {"name": "Messages", "description": "История сообщений и отправка вопросов."},
+        {"name": "Answers", "description": "Получение ответов и фрагментов источников."},
+    ],
+    lifespan=lifespan,
+)
 app.state.core_handler = None
 
 
@@ -167,6 +248,7 @@ def _current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
+    """Проверяет Bearer-токен и возвращает текущего пользователя."""
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login required.")
 
@@ -185,6 +267,7 @@ def _current_user(
 
 
 def _owned_conversation(db: Session, user_id: UUID, conversation_id: UUID) -> Conversation:
+    """Находит диалог пользователя или возвращает 404."""
     conversation = db.scalar(
         select(Conversation).where(
             Conversation.id == conversation_id, Conversation.user_id == user_id
@@ -220,18 +303,47 @@ def _answer_text(answer: AnswerResponse) -> str:
     )
 
 
-@app.get("/healthz")
+@app.get(
+    "/healthz",
+    summary="Проверить доступность API",
+    description="Возвращает успешный статус, если процесс API отвечает.",
+    response_model=HealthOutput,
+    response_description="API доступно.",
+    tags=["Health"],
+)
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/readyz")
+@app.get(
+    "/readyz",
+    summary="Проверить готовность API",
+    description="Проверяет доступность базы данных простым запросом.",
+    response_model=HealthOutput,
+    response_description="API и база данных готовы.",
+    tags=["Health"],
+    responses={503: {"description": "База данных недоступна."}},
+)
 def ready(db: Session = Depends(get_db)) -> dict[str, str]:
     db.execute(text("SELECT 1"))
     return {"status": "ready"}
 
 
-@app.post("/api/v1/auth/login")
+@app.post(
+    "/api/v1/auth/login",
+    summary="Войти",
+    description=(
+        "Проверяет логин и пароль. В ответе возвращается Bearer-токен, "
+        "который нужно передавать в защищённые запросы."
+    ),
+    response_model=LoginOutput,
+    response_description="Токен авторизации и профиль пользователя.",
+    tags=["Auth"],
+    responses={
+        401: {"description": "Неверный логин или пароль."},
+        422: {"description": "Некорректное тело запроса."},
+    },
+)
 def login(payload: LoginInput, db: Session = Depends(get_db)) -> dict[str, Any]:
     user = db.scalar(select(User).where(User.login == payload.login))
     if user is None or not _verify_password(payload.password, user.password_hash):
@@ -256,7 +368,18 @@ def login(payload: LoginInput, db: Session = Depends(get_db)) -> dict[str, Any]:
     }
 
 
-@app.post("/api/v1/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+@app.post(
+    "/api/v1/auth/logout",
+    summary="Выйти",
+    description="Удаляет текущую сессию авторизации. Требуется Bearer-токен.",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_description="Сессия завершена; тело ответа отсутствует.",
+    tags=["Auth"],
+    responses={
+        204: {"description": "Сессия успешно завершена."},
+        401: {"description": "Токен отсутствует, истёк или недействителен."},
+    },
+)
 def logout(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     _: User = Depends(_current_user),
@@ -269,14 +392,41 @@ def logout(
             db.commit()
 
 
-@app.get("/api/v1/auth/me")
+@app.get(
+    "/api/v1/auth/me",
+    summary="Получить профиль",
+    description="Возвращает профиль пользователя из текущей Bearer-сессии.",
+    response_model=ProfileOutput,
+    response_description="Профиль текущего пользователя.",
+    tags=["Auth"],
+    responses={401: {"description": "Токен отсутствует, истёк или недействителен."}},
+)
 def current_profile(user: User = Depends(_current_user)) -> dict[str, str]:
     return {"id": str(user.id), "login": user.login, "role": user.role}
 
 
-@app.get("/api/v1/conversations")
+@app.get(
+    "/api/v1/conversations",
+    summary="Список диалогов",
+    description=(
+        "Возвращает диалоги текущего пользователя, отсортированные по времени "
+        "последнего изменения. Можно отфильтровать по названию."
+    ),
+    response_model=list[ConversationOutput],
+    response_description="Список диалогов пользователя.",
+    tags=["Conversations"],
+    responses={
+        401: {"description": "Токен отсутствует, истёк или недействителен."},
+        422: {"description": "Некорректное значение параметра search."},
+    },
+)
 def list_conversations(
-    search: str | None = Query(default=None, max_length=200),
+    search: str | None = Query(
+        default=None,
+        max_length=200,
+        description="Необязательная подстрока для поиска в названиях диалогов.",
+        examples=["договор"],
+    ),
     user: User = Depends(_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
@@ -287,7 +437,20 @@ def list_conversations(
     return [_conversation_json(item) for item in db.scalars(statement).all()]
 
 
-@app.post("/api/v1/conversations", status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/api/v1/conversations",
+    summary="Создать диалог",
+    description="Создаёт новый диалог для текущего пользователя.",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ConversationOutput,
+    response_description="Созданный диалог.",
+    tags=["Conversations"],
+    responses={
+        201: {"description": "Диалог создан."},
+        401: {"description": "Токен отсутствует, истёк или недействителен."},
+        422: {"description": "Некорректное тело запроса."},
+    },
+)
 def create_conversation(
     payload: ConversationInput,
     user: User = Depends(_current_user),
@@ -300,7 +463,19 @@ def create_conversation(
     return _conversation_json(conversation)
 
 
-@app.get("/api/v1/conversations/{conversation_id}")
+@app.get(
+    "/api/v1/conversations/{conversation_id}",
+    summary="Получить диалог",
+    description="Возвращает диалог, принадлежащий текущему пользователю.",
+    response_model=ConversationOutput,
+    response_description="Найденный диалог.",
+    tags=["Conversations"],
+    responses={
+        401: {"description": "Токен отсутствует, истёк или недействителен."},
+        404: {"description": "Диалог не найден."},
+        422: {"description": "Некорректный UUID диалога."},
+    },
+)
 def get_conversation(
     conversation_id: UUID,
     user: User = Depends(_current_user),
@@ -309,7 +484,19 @@ def get_conversation(
     return _conversation_json(_owned_conversation(db, user.id, conversation_id))
 
 
-@app.patch("/api/v1/conversations/{conversation_id}")
+@app.patch(
+    "/api/v1/conversations/{conversation_id}",
+    summary="Переименовать диалог",
+    description="Изменяет название диалога текущего пользователя.",
+    response_model=ConversationOutput,
+    response_description="Диалог с обновлённым названием.",
+    tags=["Conversations"],
+    responses={
+        401: {"description": "Токен отсутствует, истёк или недействителен."},
+        404: {"description": "Диалог не найден."},
+        422: {"description": "Некорректный UUID или тело запроса."},
+    },
+)
 def rename_conversation(
     conversation_id: UUID,
     payload: ConversationUpdate,
@@ -324,7 +511,23 @@ def rename_conversation(
     return _conversation_json(conversation)
 
 
-@app.delete("/api/v1/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete(
+    "/api/v1/conversations/{conversation_id}",
+    summary="Удалить диалог",
+    description=(
+        "Удаляет диалог и связанные с ним сообщения, ответы и сохранённые "
+        "фрагменты источников."
+    ),
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_description="Диалог удалён; тело ответа отсутствует.",
+    tags=["Conversations"],
+    responses={
+        204: {"description": "Диалог успешно удалён."},
+        401: {"description": "Токен отсутствует, истёк или недействителен."},
+        404: {"description": "Диалог не найден."},
+        422: {"description": "Некорректный UUID диалога."},
+    },
+)
 def delete_conversation(
     conversation_id: UUID,
     user: User = Depends(_current_user),
@@ -341,11 +544,29 @@ def delete_conversation(
 
 @app.get(
     "/api/v1/conversations/{conversation_id}/messages",
+    summary="История сообщений",
+    description=(
+        "Возвращает сообщения диалога в хронологическом порядке. "
+        "Максимальное значение limit — 500."
+    ),
     response_model=list[MessageOutput],
+    response_description="Список сообщений диалога.",
+    tags=["Messages"],
+    responses={
+        401: {"description": "Токен отсутствует, истёк или недействителен."},
+        404: {"description": "Диалог не найден."},
+        422: {"description": "Некорректный UUID диалога или значение limit."},
+    },
 )
 def list_messages(
     conversation_id: UUID,
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(
+        default=100,
+        ge=1,
+        le=500,
+        description="Максимальное количество сообщений в ответе (от 1 до 500).",
+        examples=[100],
+    ),
     user: User = Depends(_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
@@ -362,11 +583,28 @@ def list_messages(
 
 @app.post(
     "/api/v1/conversations/{conversation_id}/messages",
+    summary="Отправить вопрос",
+    description=(
+        "Добавляет вопрос в диалог и возвращает структурированный ответ "
+        "ассистента с источниками. Требуется Bearer-токен."
+    ),
     status_code=status.HTTP_201_CREATED,
     response_model=AnswerResponse,
+    response_description="Ответ ассистента с подтверждёнными утверждениями и источниками.",
+    tags=["Messages"],
     responses={
-        status.HTTP_502_BAD_GATEWAY: {"model": TechnicalFailure},
-        status.HTTP_503_SERVICE_UNAVAILABLE: {"model": TechnicalFailure},
+        201: {"description": "Ответ успешно сформирован."},
+        401: {"description": "Токен отсутствует, истёк или недействителен."},
+        404: {"description": "Диалог не найден."},
+        422: {"description": "Некорректный UUID диалога или тело запроса."},
+        status.HTTP_502_BAD_GATEWAY: {
+            "model": TechnicalFailure,
+            "description": "Ядро вернуло некорректный ответ или сопоставление источников.",
+        },
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": TechnicalFailure,
+            "description": "Ядро, модели или обязательная конфигурация недоступны.",
+        },
     },
 )
 def send_message(
@@ -427,7 +665,7 @@ def send_message(
         failure = TechnicalFailure(
             error_code="model_unavailable",
             message="The core answer pipeline is not configured.",
-            request_id=f"req-{uuid4()}",
+            request_id=str(uuid4()),
         )
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -475,7 +713,7 @@ def send_message(
         failure = TechnicalFailure(
             error_code="invalid_model_output",
             message="Core returned an invalid answer or source mapping.",
-            request_id=str(uuid4()),
+            request_id=f"req-{uuid4()}",
         )
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -519,7 +757,19 @@ def send_message(
     return answer_json
 
 
-@app.get("/api/v1/answers/{answer_id}", response_model=AnswerResponse)
+@app.get(
+    "/api/v1/answers/{answer_id}",
+    summary="Получить ответ",
+    description="Возвращает сохранённый ответ, принадлежащий текущему пользователю.",
+    response_model=AnswerResponse,
+    response_description="Структурированный ответ с источниками.",
+    tags=["Answers"],
+    responses={
+        401: {"description": "Токен отсутствует, истёк или недействителен."},
+        404: {"description": "Ответ не найден."},
+        422: {"description": "Некорректный идентификатор ответа."},
+    },
+)
 def get_answer(
     answer_id: str,
     user: User = Depends(_current_user),
@@ -538,7 +788,20 @@ def get_answer(
 
 @app.get(
     "/api/v1/answers/{answer_id}/sources/{answer_source_id}",
+    summary="Получить фрагмент источника",
+    description=(
+        "Возвращает сохранённый фрагмент документа с текстом до и после "
+        "подсвеченного отрывка."
+    ),
     response_model=SourceSnippet,
+    response_description="Фрагмент источника и окружающий его текст.",
+    tags=["Answers"],
+    responses={
+        401: {"description": "Токен отсутствует, истёк или недействителен."},
+        404: {"description": "Ответ или источник не найден."},
+        422: {"description": "Некорректный идентификатор ответа."},
+        500: {"description": "Сохранённая позиция источника некорректна."},
+    },
 )
 def get_answer_source(
     answer_id: str,
