@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -304,13 +305,21 @@ def _answer_text(answer: AnswerResponse) -> str:
     )
 
 
+def _history_intent(question: str) -> bool:
+    normalized = re.sub(r"[^\w]+", " ", question.casefold()).strip()
+    return any(re.search(pattern, normalized) for pattern in (
+        r"\bчто\s+я\s+спросил", r"\bкакой\s+(?:был\s+)?мой\s+первый\s+вопрос",
+        r"\bчто\s+ты\s+ответил", r"\bповтори\s+мой\s+(?:первый\s+)?вопрос",
+    ))
+
+
 def _history_result(question: str, messages: list[Message]) -> CoreResult | None:
-    normalized = question.casefold()
-    if not any(marker in normalized for marker in ("что я спросил", "первый вопрос", "что ты ответил", "повтори мой")):
+    if not _history_intent(question):
         return None
-    users = [item.content for item in messages if item.role == "user"]
+    normalized = re.sub(r"[^\w]+", " ", question.casefold()).strip()
+    users = [item.content for item in messages if item.role == "user" and not _history_intent(item.content)]
     assistants = [item.content for item in messages if item.role == "assistant"]
-    if "что ты ответил" in normalized:
+    if re.search(r"\bчто\s+ты\s+ответил", normalized):
         value = assistants[-1] if assistants else "Ранее я ещё не отвечал в этом диалоге."
     elif "первый" in normalized:
         value = users[0] if users else "В этом диалоге ещё нет предыдущих вопросов."
@@ -689,8 +698,9 @@ def send_message(
         conversation.updated_at = datetime.now(timezone.utc)
     db.commit()
 
+    history_result = _history_result(payload.content, list(reversed(recent)))
     core_handler = request.app.state.core_handler
-    if core_handler is None:
+    if core_handler is None and history_result is None:
         failure = TechnicalFailure(
             error_code="model_unavailable",
             message="The core answer pipeline is not configured.",
@@ -703,7 +713,7 @@ def send_message(
 
     corpus_id = os.getenv("CORPUS_ID", "").strip()
     index_generation_id = os.getenv("INDEX_GENERATION_ID", "").strip()
-    if not corpus_id or not index_generation_id:
+    if (not corpus_id or not index_generation_id) and history_result is None:
         failure = TechnicalFailure(
             error_code="internal_error",
             message="CORPUS_ID and INDEX_GENERATION_ID must be configured.",
@@ -729,7 +739,7 @@ def send_message(
     )
 
     try:
-        core_result = _history_result(payload.content, list(reversed(recent))) or answer_question(model_request, core_handler)
+        core_result = history_result or answer_question(model_request, core_handler)
     except CoreUnavailable as exc:
         failure = TechnicalFailure(
             error_code="model_unavailable", message=str(exc), request_id=str(uuid4())

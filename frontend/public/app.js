@@ -202,16 +202,16 @@
   }
 
   function normalizeAnswer(r) {
-    const segments = (r.blocks || []).flatMap((block) => block.segments || []);
     const answer = typeof r.answer === "string" ? r.answer :
-      segments.map((segment) => {
+      (r.blocks || []).map((block) => (block.segments || []).map((segment) => {
         const citations = (segment.citations || []).map((citation) => `[${citation.number}]`).join(" ");
         return segment.text + (citations ? " " + citations : "");
-      }).join("\n\n") || r.content || r.text || "";
+      }).join(" ")).filter(Boolean).join("\n\n") || r.content || r.text || "";
     let status = r.status || null;
     if (!status) {
       if (r.legal_status === "answered" && r.verification_status === "passed") status = "confirmed";
       else if (r.legal_status === "partial" || r.legal_status === "clarification_required" || r.verification_status === "partial") status = "partial";
+      else if ((r.retrieval_audit?.passes || []).includes("conversation_history")) status = "confirmed";
       else if (r.legal_status === "insufficient_evidence" || r.legal_status === "out_of_scope") status = "not_found";
     }
     const sources = (r.sources || r.citations || []).map((s, i) => ({

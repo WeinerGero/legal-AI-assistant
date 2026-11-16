@@ -305,3 +305,15 @@ def test_history_question_uses_full_dialogue_without_retrieval() -> None:
     assert result is not None
     assert result.answer.blocks[0].segments[0].text == "Первый вопрос"
     assert result.answer.retrieval_audit.performed is False
+
+
+def test_history_question_skips_earlier_history_requests() -> None:
+    messages = [
+        SimpleNamespace(role="user", content="Какой срок оплаты по договору А?"),
+        SimpleNamespace(role="assistant", content="Срок подтверждён источником."),
+        SimpleNamespace(role="user", content="что я спросил?"),
+        SimpleNamespace(role="assistant", content="Какой срок оплаты по договору А?"),
+    ]
+    result = _history_result("Что я спросил?", messages)
+    assert result is not None
+    assert result.answer.blocks[0].segments[0].text == "Какой срок оплаты по договору А?"
