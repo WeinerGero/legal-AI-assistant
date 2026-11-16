@@ -2,21 +2,38 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 from pathlib import Path
 from typing import Any
 
 import httpx
+from submission.model_client import ModelClient
 
 
 JUDGE_SYSTEM = """You are an independent diagnostic judge for a closed-corpus legal RAG system. Return only JSON with case_id, criterion_scores, overall_score, critical_failure, explanation. Judge the supplied answer against the supplied reference and behavior. Do not invent facts."""
 
 
+def smoke(path: Path) -> dict[str, Any]:
+    client = ModelClient(max_tokens=64, temperature=0.0)
+    base, key, model = client.base_url, client.api_key, client.llm_model
+    started = __import__("time").perf_counter()
+    result: dict[str, Any] = {"model": model}
+    try:
+        response = httpx.post(f"{base}/chat/completions", headers={"Authorization": f"Bearer {key}"}, json={"model": model, "temperature": 0.0, "max_tokens": 64, "messages": [{"role": "system", "content": "Return only JSON."}, {"role": "user", "content": "{\"ok\": true}"}]}, timeout=60.0)
+        result.update({"http_status": response.status_code, "response": response.json(), "ok": response.is_success})
+        result["response_sha256"] = hashlib.sha256(response.content).hexdigest()
+    except Exception as exc:
+        result.update({"ok": False, "error": type(exc).__name__})
+    result["duration_ms"] = round((__import__("time").perf_counter() - started) * 1000, 3)
+    path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
 def judge_run(run_root: Path, cases: list[dict[str, Any]]) -> None:
-    base = os.environ.get("LLM_BASE_URL", "").rstrip("/")
-    key = os.environ.get("LLM_API_KEY") or os.environ.get("LLM_DEV") or os.environ.get("OPENAI_API_KEY")
-    model = os.environ.get("LLM_MODEL", "deepseek-v4.1-flash")
+    client_config = ModelClient(max_tokens=1200, temperature=0.0)
+    base, key, model = client_config.base_url, client_config.api_key, client_config.llm_model
     if not base or not key:
         raise RuntimeError("DeepSeek judge unavailable: LLM_BASE_URL or configured key is missing")
     answers = {}
