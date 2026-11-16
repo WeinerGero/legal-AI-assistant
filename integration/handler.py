@@ -109,7 +109,14 @@ class RagHandler:
             with self._state_lock:
                 if now < self._next_probe_at:
                     return False
-            diagnostics = self._probe_dependencies()
+            model_lock = getattr(self, "_model_lock", None)
+            if model_lock is not None and not model_lock.acquire(blocking=False):
+                return False
+            try:
+                diagnostics = self._probe_dependencies()
+            finally:
+                if model_lock is not None:
+                    model_lock.release()
             ready = bool(diagnostics["ready"])
             with self._state_lock:
                 self.diagnostics = diagnostics
