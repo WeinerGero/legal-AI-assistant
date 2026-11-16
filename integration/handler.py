@@ -149,13 +149,13 @@ class RagHandler:
             self.ready = False
             self._next_probe_at = monotonic()
 
-    def route_question(self, question: str) -> RouteDecision:
+    def route_question(self, question: str, history: list[dict[str, str]]) -> RouteDecision:
         if not self._router_lock.acquire(timeout=30.0):
             raise ModelDependencyError("deepseek", "routing queue timed out")
         try:
             self.router_client.budget = RuntimeBudget.start(30.0)
             try:
-                request = {"question": question}
+                request = {"question": question, "history": history}
                 for attempt in range(2):
                     raw = self.router_client.complete_json(
                         ROUTING_PROMPT,
