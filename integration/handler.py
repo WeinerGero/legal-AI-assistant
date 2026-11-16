@@ -221,7 +221,7 @@ class RagHandler:
             result["bge_m3"] = {"ready": valid, "dimension": len(embedding)}
         except Exception as exc:
             LOGGER.warning("model_probe service=bge_m3 error_type=%s", type(exc).__name__)
-            result["bge_m3"] = {"ready": False, "error_type": type(exc).__name__}
+            result["bge_m3"] = {"ready": False, "error_type": type(exc).__name__, "http_status": getattr(getattr(exc, "response", None), "status_code", None), "reason": str(exc)[:160]}
         try:
             response = httpx.post(
                 f"{self.client.reranker_base_url}/rerank",
@@ -243,7 +243,7 @@ class RagHandler:
             result["qwen3"] = {"ready": valid, "results": len(rows) if isinstance(rows, list) else 0}
         except Exception as exc:
             LOGGER.warning("model_probe service=qwen3 error_type=%s", type(exc).__name__)
-            result["qwen3"] = {"ready": False, "error_type": type(exc).__name__}
+            result["qwen3"] = {"ready": False, "error_type": type(exc).__name__, "http_status": getattr(getattr(exc, "response", None), "status_code", None), "reason": str(exc)[:160]}
         try:
             if not self.client.base_url or not self.client.api_key:
                 raise RuntimeError("DeepSeek configuration is incomplete")
