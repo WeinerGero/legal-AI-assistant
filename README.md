@@ -56,21 +56,53 @@ PostgreSQL хранит пользователей, диалоги, сообще
 
 Требуются Git и Docker Desktop с Docker Compose. Создайте локальный файл окружения; `.env` не должен попадать в Git.
 
-### Windows PowerShell
+## Подготовка к развёртыванию
+
+Создайте `.env` из `.env.example`. Переменные PowerShell имеют приоритет над значениями из `.env` для текущей команды Compose.
+
+| Переменная | Обязательна | Что указать |
+| --- | --- | --- |
+| `POSTGRES_PASSWORD` | Да | Пароль базы |
+| `APP_USER_LOGIN` | Да | Логин пользователя |
+| `APP_USER_PASSWORD` | Да | Пароль пользователя |
+| `LLM_DEV` | Да для DeepSeek | Ключ доступа |
+| `API_PORT` | Нет | Порт API, по умолчанию `8001` |
+| `FRONTEND_PORT` | Нет | Порт интерфейса, по умолчанию `8082` |
+
+`CORPUS_ID` и `INDEX_GENERATION_ID` не заполняются вручную: рабочий RAG вычисляет их при старте. Адреса BGE-M3 и Qwen3 из `.env.example` предназначены только для сценария C; Compose-overlays заменяют их внутренними адресами сервисов.
+
+### A. Полный запуск через Docker Compose — CPU
+
+Требуются Docker Desktop, заполненные обязательные переменные и доступ в сеть для первой загрузки весов.
 
 ```powershell
 Copy-Item .env.example .env
 docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml -f integration/docker-compose.models.yml up -d --build
 ```
 
-### Linux
+Откройте <http://localhost:8082/> и проверьте `Invoke-RestMethod http://localhost:8001/integration/readyz`. Остановка без удаления данных: та же команда с `stop` вместо `up -d --build`.
+
+### B. Полный запуск через Docker Compose — NVIDIA CUDA
+
+Нужны NVIDIA Driver и NVIDIA Container Toolkit, а обязательные переменные заполняются так же, как в сценарии A.
 
 ```bash
-cp .env.example .env
-docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml -f integration/docker-compose.models.yml up -d --build
+docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml -f integration/docker-compose.models.yml -f integration/docker-compose.models.cuda.yml up -d --build
 ```
 
-Заполните в `.env` как минимум `POSTGRES_PASSWORD`, `APP_USER_LOGIN`, `APP_USER_PASSWORD` и ключ DeepSeek `LLM_DEV`. Рабочий RAG доступен по адресам:
+Откройте <http://localhost:8082/> и проверьте `http://localhost:8001/integration/readyz`; остановка выполняется той же командой с `stop`.
+
+### C. Подключение отдельно запущенных BGE-M3 и Qwen3
+
+Модели должны быть доступны на host-портах `8081` и `8080`; оставьте значения `EMBEDDER_BASE_URL` и `RERANKER_BASE_URL` из `.env.example`, затем выполните:
+
+```powershell
+docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml up -d --build
+```
+
+Откройте <http://localhost:8082/> и проверьте `http://localhost:8001/integration/readyz`; остановка — `docker compose -f docker-compose.yml -f integration/docker-compose.rag.yml stop`.
+
+Рабочий RAG доступен по адресам:
 
 - веб-интерфейс — <http://localhost:8082>;
 - API — <http://localhost:8001>;

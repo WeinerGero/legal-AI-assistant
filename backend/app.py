@@ -31,6 +31,7 @@ from backend.database import (
 )
 from backend.schemas import (
     AnswerResponse,
+    CoreResult,
     ModelQuestion,
     QuestionContext,
     RecentMessage,
@@ -301,6 +302,35 @@ def _answer_text(answer: AnswerResponse) -> str:
     return "\n\n".join(
         segment.text for block in answer.blocks for segment in block.segments
     )
+
+
+def _history_result(question: str, messages: list[Message]) -> CoreResult | None:
+    normalized = question.casefold()
+    if not any(marker in normalized for marker in ("что я спросил", "первый вопрос", "что ты ответил", "повтори мой")):
+        return None
+    users = [item.content for item in messages if item.role == "user"]
+    assistants = [item.content for item in messages if item.role == "assistant"]
+    if "что ты ответил" in normalized:
+        value = assistants[-1] if assistants else "Ранее я ещё не отвечал в этом диалоге."
+    elif "первый" in normalized:
+        value = users[0] if users else "В этом диалоге ещё нет предыдущих вопросов."
+    else:
+        value = users[-1] if users else "В этом диалоге ещё нет предыдущих вопросов."
+    return CoreResult.model_validate({
+        "answer": {
+            "schema_version": "1.0",
+            "answer_id": str(uuid4()),
+            "legal_status": "out_of_scope",
+            "verification_status": "passed",
+            "missing_information": [],
+            "false_premises": [],
+            "clarification_question": None,
+            "blocks": [{"block_type": "clarification", "segments": [{"claim_id": "H001", "text": value, "citations": []}]}],
+            "sources": [],
+            "retrieval_audit": {"performed": False, "passes": ["conversation_history"]},
+        },
+        "source_locations": [],
+    })
 
 
 @app.get(
@@ -619,7 +649,6 @@ def send_message(
         select(Message)
         .where(Message.conversation_id == conversation_id)
         .order_by(Message.created_at.desc(), Message.id.desc())
-        .limit(6)
     ).all())
     # Повтор последнего вопроса после сбоя не дублирует его в истории.
     retrying_previous_message = bool(
@@ -700,7 +729,7 @@ def send_message(
     )
 
     try:
-        core_result = answer_question(model_request, core_handler)
+        core_result = _history_result(payload.content, list(reversed(recent))) or answer_question(model_request, core_handler)
     except CoreUnavailable as exc:
         failure = TechnicalFailure(
             error_code="model_unavailable", message=str(exc), request_id=str(uuid4())
